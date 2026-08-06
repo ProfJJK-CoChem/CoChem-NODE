@@ -1,100 +1,145 @@
-#!/usr/bin/env python3
 """
-CoChem-NODE: HPC Registry Healer
-Reconciles the local cochem_hpc_registry.json with the remote SLURM queue.
-Safely updates job statuses (STAGED, RUNNING, COMPLETED, ORPHANED) to ensure
-fault-tolerant recovery if the local Jupyter kernel crashes.
+CoChem-NODE: Stage 3.3 - Registry Reconciliation (The Healer)
+Recovers orphaned HPC jobs by cross-referencing local registry state
+against the live remote Slurm queue.
 """
 
-import os
-import json
 import logging
 from pathlib import Path
+from typing import Dict, List, Optional
 
-class Colors:
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
+# Import CoChem modules
+import sys
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-logging.basicConfig(filename='cochem_node_healer.log', level=logging.INFO)
+from CoChem_NODE.cochem_node_bridge import NodeBridge, CoChemHPCError
+from Libraries.cochem_registry_manager import RegistryManager
+
+logger = logging.getLogger("CoChem_NODE_Healer")
+logger.setLevel(logging.INFO)
 
 class RegistryHealer:
-    def __init__(self):
-        self.registry_path = Path("cochem_hpc_registry.json")
-        self.registry = self.load_registry()
+    """
+    Synchronizes local tracking databases with the remote Slurm queue.
+    """
+    def __init__(self, bridge: Optional[NodeBridge] = None, registry_manager: Optional[RegistryManager] = None):
+        self.registry_manager = registry_manager or RegistryManager()
+        self.config = self.registry_manager.get_config()
+        self.bridge = bridge or NodeBridge(self.config)
 
-    def load_registry(self) -> dict:
-        if not self.registry_path.exists():
-            print(f"{Colors.WARNING}⚠️ HPC Registry missing. Run cochem_job_batcher.py first.{Colors.ENDC}")
-            return {"batches": {}}
-        with open(self.registry_path, "r") as f:
-            return json.load(f)
+    def _ensure_connection(self):
+        if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
+            logger.info("RegistryHealer: Re-establishing SSH connection...")
+            self.bridge.establish_heartbeat()
 
-    def save_registry(self):
-        with open(self.registry_path, "w") as f:
-            json.dump(self.registry, f, indent=4)
-
-    def mock_remote_squeue(self) -> set:
+    def query_remote_queue(self) -> Dict[str, Dict[str, str]]:
         """
-        Simulates parsing a remote 'squeue' payload.
-        In a live run, this calls cochem_node_bridge.py -> check_remote_queue().
+        Executes `squeue` to retrieve all jobs belonging to the configured user.
+        Returns a dictionary mapping Job IDs to their status details.
         """
-        # We simulate that UUIDs containing 'a' or 'b' are still running.
-        running_uuids = set()
-        for batch_uuid in self.registry.get("batches", {}).keys():
-            if 'a' in batch_uuid or 'b' in batch_uuid:
-                running_uuids.add(batch_uuid)
-        return running_uuids
-
-    def reconcile(self):
-        print(f"\n{Colors.OKCYAN}--- CoChem-NODE: Registry Reconciliation ---{Colors.ENDC}")
+        self._ensure_connection()
+        username = self.config.hpc.username
         
-        batches = self.registry.get("batches", {})
-        if not batches:
-            print(f"{Colors.OKGREEN}✅ Local registry is empty. No jobs to reconcile.{Colors.ENDC}")
-            return
-
-        print("📡 Polling remote cluster queue (Mock Mode)...")
-        active_remote_jobs = self.mock_remote_squeue()
+        # Format: JobID|JobName|State|TimeUsed|Nodes
+        command = f"squeue -u {username} -h -o '%i|%j|%T|%M|%D'"
         
-        updated_count = 0
-        completed_count = 0
-        
-        for batch_uuid, data in batches.items():
-            current_status = data.get("status")
+        active_remote_jobs = {}
+        try:
+            stdin, stdout, stderr = self.bridge.client.exec_command(command)
+            output = stdout.read().decode('utf-8').strip()
+            err_output = stderr.read().decode('utf-8').strip()
             
-            # If it's already recorded as complete, skip
-            if current_status == "COMPLETED":
-                completed_count += 1
-                continue
+            if err_output:
+                logger.error(f"Failed to query remote queue: {err_output}")
+                return {}
                 
-            # If it was running but is no longer in squeue, it finished (or failed)
-            if current_status in ["STAGED", "RUNNING"] and batch_uuid not in active_remote_jobs:
-                print(f"   ↳ {Colors.OKGREEN}[RECOVERED]{Colors.ENDC} Batch {batch_uuid} is no longer in queue. Marking COMPLETED.")
-                batches[batch_uuid]["status"] = "COMPLETED"
-                updated_count += 1
-                completed_count += 1
-                logging.info(f"Adopted orphan job {batch_uuid} -> COMPLETED")
-                
-            # If it was staged and is now in squeue
-            elif current_status == "STAGED" and batch_uuid in active_remote_jobs:
-                print(f"   ↳ {Colors.OKCYAN}[ACTIVE]{Colors.ENDC} Batch {batch_uuid} transition to RUNNING.")
-                batches[batch_uuid]["status"] = "RUNNING"
-                updated_count += 1
-                logging.info(f"Updated job {batch_uuid} -> RUNNING")
+            if not output:
+                logger.info(f"No active remote jobs found for user {username}.")
+                return {}
 
-        self.save_registry()
+            for line in output.split('\n'):
+                parts = line.split('|')
+                if len(parts) >= 5:
+                    job_id, name, state, time_used, nodes = [p.strip() for p in parts]
+                    active_remote_jobs[job_id] = {
+                        "name": name,
+                        "state": state,
+                        "time_used": time_used,
+                        "nodes": nodes
+                    }
+                    
+            return active_remote_jobs
+            
+        except Exception as e:
+            logger.error(f"Network error during queue query: {e}")
+            return {}
+
+    def heal_registry(self, known_local_jobs: Dict[str, str]) -> Dict[str, str]:
+        """
+        Compares a local dictionary of {job_id: expected_state} against the live queue.
+        Returns an updated dictionary reflecting the true state.
         
-        print(f"\n{Colors.BOLD}Reconciliation Summary:{Colors.ENDC}")
-        print(f"🔄 Records Updated: {updated_count}")
-        print(f"✅ Total Completed: {completed_count} / {len(batches)}")
+        Note: In a full integration, `known_local_jobs` would be read directly from
+        a dedicated tracking section of the `cochem_system_config.json`.
+        """
+        logger.info("Initiating Registry Reconciliation...")
+        live_queue = self.query_remote_queue()
+        
+        updated_jobs = {}
+        orphans_adopted = 0
+        
+        for job_id, local_state in known_local_jobs.items():
+            if job_id in live_queue:
+                actual_state = live_queue[job_id]['state']
+                
+                if local_state != actual_state:
+                     logger.info(f"🔄 Healing State: Job {job_id} changed from {local_state} to {actual_state}")
+                
+                # We update our local record with the true remote state
+                updated_jobs[job_id] = actual_state
+            else:
+                # If the job is in our local registry but NOT in the active queue,
+                # it has either completed, failed, or was cancelled.
+                if local_state not in ["COMPLETED", "FAILED", "CANCELLED"]:
+                    logger.warning(f"⚠️ Orphan Detected: Job {job_id} ({local_state}) is missing from remote queue.")
+                    # In a production pipeline, this is where we would trigger Stage 3.2 
+                    # (Artifact Retriever) to pull the logs and determine the final exit code.
+                    # For reconciliation purposes, we mark it as UNKNOWN until validated.
+                    updated_jobs[job_id] = "UNKNOWN_REQUIRES_PULL"
+                    orphans_adopted += 1
+                else:
+                    # It was already known to be finished, keep the state
+                    updated_jobs[job_id] = local_state
+        
+        # Check for \"Ghost\" jobs: running on the cluster but missing locally
+        for remote_id, details in live_queue.items():
+            if remote_id not in known_local_jobs:
+                logger.warning(f"👻 Ghost Job Detected: Remote Job {remote_id} ({details['name']}) is running but not tracked locally.")
+                # We adopt it into our tracking list
+                updated_jobs[remote_id] = details['state']
+                orphans_adopted += 1
 
-def main():
-    healer = RegistryHealer()
-    healer.reconcile()
+        logger.info(f"Reconciliation complete. {orphans_adopted} orphaned/ghost jobs adopted.")
+        return updated_jobs
 
 if __name__ == "__main__":
-    main()
+    # Diagnostic / Test Run
+    logging.basicConfig(level=logging.INFO)
+    try:
+        healer = RegistryHealer()
+        print("Registry Healer initialized.")
+        
+        # Simulated local state (e.g., notebook crashed while these were running)
+        dummy_local_state = {
+            "999991": "RUNNING",
+            "999992": "PENDING"
+        }
+        
+        print("\nSimulating Reconciliation...")
+        # updated_state = healer.heal_registry(dummy_local_state)
+        # print(f"Healed State: {updated_state}")
+        
+    except Exception as e:
+         print(f"Healer Error: {e}")
