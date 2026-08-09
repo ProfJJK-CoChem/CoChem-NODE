@@ -1,32 +1,37 @@
 # cochem_canvas_target: cochem_node_config.py
 """
 Configuration module for CoChem-NODE.
-Handles all configuration settings for the NODE system.
+Unified under RegistryManager (cochem_system_config.json) (NODE-19).
 """
 
 import json
 from pathlib import Path
+from typing import Optional
+
+try:
+    from cochem_registry_manager import RegistryManager, get_current_config
+except ImportError:
+    from Libraries.cochem_registry_manager import RegistryManager, get_current_config
 
 class NODEConfig:
     """
-    Configuration class for CoChem-NODE system.
+    Unified configuration wrapper for CoChem-NODE system (NODE-19).
+    Delegates all settings to RegistryManager.
     """
     
-    def __init__(self, config_file: str = "cochem_node_config.json"):
-        """Initialize configuration."""
+    def __init__(self, config_file: str = "cochem_system_config.json"):
+        """Initialize configuration connected to global RegistryManager."""
         self.config_file = config_file
+        self.registry_manager = RegistryManager(registry_path=config_file)
         self.config = self._load_config()
         
     def _load_config(self) -> dict:
-        """Load configuration from file."""
+        """Load configuration via RegistryManager."""
         try:
-            with open(self.config_file, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            # Return default configuration
-            return self._get_default_config()
-        except json.JSONDecodeError as e:
-            print(f"❌ Error loading config: {e}")
+            cfg_obj = self.registry_manager.get_config()
+            return cfg_obj.model_dump()
+        except Exception as e:
+            print(f"⚠️ Error loading config from RegistryManager: {e}")
             return self._get_default_config()
             
     def _get_default_config(self) -> dict:
@@ -42,7 +47,7 @@ class NODEConfig:
             },
             "registry": {
                 "type": "json",
-                "file_path": "./registry.json"
+                "file_path": "./cochem_system_config.json"
             },
             "logging": {
                 "level": "INFO",
@@ -66,9 +71,12 @@ class NODEConfig:
         self._save_config()
         
     def _save_config(self):
-        """Save current configuration to file."""
-        with open(self.config_file, 'w') as f:
-            json.dump(self.config, f, indent=2)
+        """Save current configuration using RegistryManager."""
+        try:
+            if self.registry_manager.config is not None:
+                self.registry_manager.save()
+        except Exception as e:
+            print(f"⚠️ Warning saving via RegistryManager: {e}")
             
     def update_from_dict(self, updates: dict):
         """Update configuration from dictionary."""

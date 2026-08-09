@@ -1,0 +1,151 @@
+{
+    "batches": {
+        "0097d5da": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_0097d5da.sbatch",
+            "remote_job_id": null
+        },
+        "69070da9": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_69070da9.sbatch",
+            "remote_job_id": null
+        },
+        "3512e5a6": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_3512e5a6.sbatch",
+            "remote_job_id": null
+        },
+        "d85ceece": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_d85ceece.sbatch",
+            "remote_job_id": null
+        },
+        "d21e067d": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_d21e067d.sbatch",
+            "remote_job_id": null
+        },
+        "cc2183ae": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_cc2183ae.sbatch",
+            "remote_job_id": null
+        },
+        "43ac11ef": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_43ac11ef.sbatch",
+            "remote_job_id": null
+        },
+        "82a6ab0b": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_82a6ab0b.sbatch",
+            "remote_job_id": null
+        },
+        "9b7bc55b": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_9b7bc55b.sbatch",
+            "remote_job_id": null
+        },
+        "aea39711": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_aea39711.sbatch",
+            "remote_job_id": null
+        },
+        "8c11f211": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_8c11f211.sbatch",
+            "remote_job_id": null
+        },
+        "ec296b18": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_ec296b18.sbatch",
+            "remote_job_id": null
+        },
+        "0c3c91e2": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_0c3c91e2.sbatch",
+            "remote_job_id": null
+        },
+        "a4c9372d": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_a4c9372d.sbatch",
+            "remote_job_id": null
+        },
+        "3ec2cf75": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_3ec2cf75.sbatch",
+            "remote_job_id": null
+        },
+        "c5d23765": {
+            "module": "TestEngine",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_c5d23765.sbatch",
+            "remote_job_id": null
+        },
+        "f4ff4863": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_f4ff4863.sbatch",
+            "remote_job_id": null
+        },
+        "2cffea80": {
+            "module": "TestEngine",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_2cffea80.sbatch",
+            "remote_job_id": null
+        },
+        "92d05375": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_92d05375.sbatch",
+            "remote_job_id": null
+        },
+        "3e96eb2c": {
+            "module": "TestEngine",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_3e96eb2c.sbatch",
+            "remote_job_id": null
+        },
+        "8cb139e6": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_8cb139e6.sbatch",
+            "remote_job_id": null
+        }
+    }
+}

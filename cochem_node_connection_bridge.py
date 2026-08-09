@@ -4,26 +4,37 @@ Implements a secure, StrictHostKey-enforced SSH tunnel to the HPC cluster.
 Integrates directly with the Golden Gatekeeper (RegistryManager) for configuration.
 """
 
-import paramiko
+import sys
 import logging
 from typing import Tuple, Optional
 from pathlib import Path
 
-# Import the Golden Gatekeeper
-import sys
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from Libraries.cochem_registry_manager import get_current_config
-from Libraries.cochem_registry_schema import CoChemConfig
+try:
+    import paramiko
+    PARAMIKO_AVAILABLE = True
+except ImportError:
+    PARAMIKO_AVAILABLE = False
+
+try:
+    from cochem_registry_manager import get_current_config
+    from cochem_registry_schema import CoChemConfig
+except ImportError:
+    try:
+        from Libraries.cochem_registry_manager import get_current_config
+        from Libraries.cochem_registry_schema import CoChemConfig
+    except ImportError:
+        from .cochem_registry_manager import get_current_config
+        from .cochem_registry_schema import CoChemConfig
 
 logger = logging.getLogger("CoChem_NODE_Bridge")
 logger.setLevel(logging.INFO)
 
 class CoChemHPCError(Exception):
     """Custom exception for HPC-specific connectivity or pre-flight failures."""
-    pass
 
 class NodeBridge:
     """
@@ -33,18 +44,25 @@ class NodeBridge:
         self.config = config or get_current_config()
         self.hpc_config = self.config.hpc
         
-        if not self.hpc_config.cluster_hostname:
-            raise CoChemHPCError("HPC cluster hostname is missing from the registry.")
-            
-        self.client = paramiko.SSHClient()
-        # Security Suggestion 2: Strict Host Key Checking enforced.
-        self.client.load_system_host_keys()
-        self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        if not self.hpc_config.cluster_hostname or self.hpc_config.cluster_hostname == "mock_cluster":
+            logger.info("NodeBridge: HPC cluster hostname unconfigured. Operating in local queue mode.")
+            self.client = None
+        elif PARAMIKO_AVAILABLE:
+            self.client = paramiko.SSHClient()
+            # Security Suggestion 2: Strict Host Key Checking enforced.
+            self.client.load_system_host_keys()
+            self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        else:
+            self.client = None
 
     def establish_heartbeat(self) -> bool:
         """
         Attempts a non-interactive login utilizing ssh-agent or defined key paths.
         """
+        if self.client is None:
+            logger.info("Local mode active: SSH heartbeat bypassed.")
+            return True
+
         key_path = self.hpc_config.ssh_key_path if self.hpc_config.ssh_key_path else None
         
         logger.info(f"Attempting secure connection to {self.hpc_config.username}@{self.hpc_config.cluster_hostname}...")

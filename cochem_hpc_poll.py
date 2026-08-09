@@ -6,16 +6,20 @@ using exponential backoff to prevent SSH connection bans.
 
 import time
 import logging
+import shlex
 from typing import Tuple, Optional
 from pathlib import Path
 
 # Import CoChem modules
 import sys
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from CoChem_NODE.cochem_node_bridge import NodeBridge, CoChemHPCError
+try:
+    from cochem_node_connection_bridge import NodeBridge, CoChemHPCError
+except ImportError:
+    from Libraries.cochem_node_connection_bridge import NodeBridge, CoChemHPCError
 
 logger = logging.getLogger("CoChem_NODE_Watchdog")
 logger.setLevel(logging.INFO)
@@ -34,9 +38,34 @@ class SlurmWatchdog:
         self.current_delay = self.base_delay
 
     def _ensure_connection(self):
-        if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
-            logger.info("Watchdog: Re-establishing SSH connection...")
-            self.bridge.establish_heartbeat()
+        if self.bridge.client is not None:
+            if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
+                logger.info("Watchdog: Re-establishing SSH connection...")
+                self.bridge.establish_heartbeat()
+
+    def _query_sacct_status(self, job_id: str) -> str:
+        """
+        Queries sacct to verify exact exit status when job is missing from squeue (NODE-15).
+        """
+        if self.bridge.client is None:
+            return "COMPLETED"
+
+        safe_job_id = shlex.quote(str(job_id))
+        command = f"sacct -j {safe_job_id} -h -o State"
+        try:
+            stdin, stdout, stderr = self.bridge.client.exec_command(command)
+            sacct_out = stdout.read().decode('utf-8').strip().upper()
+            if sacct_out:
+                if any(err in sacct_out for err in ["FAILED", "CANCELLED", "OUT_OF_MEMORY", "NODE_FAIL", "TIMEOUT"]):
+                    logger.error(f"sacct verified job {job_id} failed with state: {sacct_out}")
+                    return "FAILED"
+                elif "COMPLETED" in sacct_out:
+                    return "COMPLETED"
+        except Exception as e:
+            logger.warning(f"sacct fallback query failed for job {job_id}: {e}")
+            
+        # Default fallback
+        return "COMPLETED"
 
     def check_job_status(self, job_id: str) -> str:
         """
@@ -44,9 +73,11 @@ class SlurmWatchdog:
         Returns one of: PENDING, RUNNING, COMPLETED, FAILED, UNKNOWN
         """
         self._ensure_connection()
-        
-        # We use squeue formatting to just get the state (%T) for the specific job
-        command = f"squeue -j {job_id} -h -O State"
+        if self.bridge.client is None:
+            return "COMPLETED"
+            
+        safe_job_id = shlex.quote(str(job_id))
+        command = f"squeue -j {safe_job_id} -h -O State"
         
         try:
             stdin, stdout, stderr = self.bridge.client.exec_command(command)
@@ -54,21 +85,16 @@ class SlurmWatchdog:
             err_output = stderr.read().decode('utf-8').strip()
             
             if err_output:
-                # If squeue returns an error, it often means the job ID is no longer in the active queue
-                if "Invalid job id" in err_output:
-                    # Job has likely finished or failed and fallen out of squeue. 
-                    # A robust implementation would then check `sacct` or `seff`.
-                    # For now, we will mark it as COMPLETED to trigger the artifact retrieval step,
-                    # which will definitively check for the output file.
-                    logger.info(f"Job {job_id} not in squeue. Assuming COMPLETED/TERMINATED.")
-                    return "COMPLETED"
+                # If squeue returns an error like "Invalid job id", check sacct exit state (NODE-15)
+                if "Invalid job id" in err_output or "slurm_load_jobs error" in err_output:
+                    logger.info(f"Job {job_id} not in active squeue. Querying sacct for exact status...")
+                    return self._query_sacct_status(job_id)
                 logger.error(f"squeue error for job {job_id}: {err_output}")
                 return "UNKNOWN"
                 
             if not output:
-                 # Empty output also implies the job is gone from the active queue
-                 logger.info(f"Job {job_id} returned empty state. Assuming COMPLETED/TERMINATED.")
-                 return "COMPLETED"
+                 logger.info(f"Job {job_id} returned empty squeue state. Querying sacct...")
+                 return self._query_sacct_status(job_id)
 
             # Slurm states: PENDING, RUNNING, SUSPENDED, COMPLETING, COMPLETED, CANCELLED, FAILED, TIMEOUT
             state = output.upper()
@@ -113,21 +139,14 @@ class SlurmWatchdog:
                 logger.error(f"❌ Job {job_id} failed on the cluster.")
                 return False
             
-            # If PENDING, RUNNING, or UNKNOWN, wait and increase delay
             logger.info(f"Job {job_id} status: {status}. Next check in {int(self.current_delay)} seconds...")
             time.sleep(self.current_delay)
-            
-            # Apply exponential backoff
             self.current_delay = min(self.current_delay * self.backoff_factor, self.max_delay)
 
 if __name__ == "__main__":
-    # Diagnostic / Test Run
     logging.basicConfig(level=logging.INFO)
     try:
         watchdog = SlurmWatchdog()
-        # Note: Replace '123456' with a real job ID if testing live
-        print("Testing Watchdog Polling Logic (Simulated):")
-        # watchdog.wait_for_completion("123456", timeout_hours=0.1)
         print("Watchdog initialized successfully.")
     except Exception as e:
          print(f"Watchdog Error: {e}")

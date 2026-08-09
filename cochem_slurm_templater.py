@@ -15,8 +15,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from Libraries.cochem_registry_manager import get_current_config
-from Libraries.cochem_registry_schema import CoChemConfig
+try:
+    from Libraries.cochem_registry_manager import get_current_config
+    from Libraries.cochem_registry_schema import CoChemConfig
+except ImportError:
+    from cochem_registry_manager import get_current_config
+    from cochem_registry_schema import CoChemConfig
 
 logger = logging.getLogger("CoChem_NODE_Templater")
 logger.setLevel(logging.INFO)

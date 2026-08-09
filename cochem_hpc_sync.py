@@ -8,16 +8,20 @@ import os
 import hashlib
 import logging
 import time
+import shlex
 from pathlib import Path
 from typing import List, Tuple, Optional
 
 # Import CoChem modules
 import sys
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from CoChem_NODE.cochem_node_bridge import NodeBridge, CoChemHPCError
+try:
+    from cochem_node_connection_bridge import NodeBridge, CoChemHPCError
+except ImportError:
+    from Libraries.cochem_node_connection_bridge import NodeBridge, CoChemHPCError
 
 logger = logging.getLogger("CoChem_NODE_Sync")
 logger.setLevel(logging.INFO)
@@ -30,14 +34,15 @@ class ArtifactRetriever:
         self.bridge = bridge or NodeBridge()
 
     def _ensure_connection(self):
-        if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
-            logger.info("ArtifactRetriever: Re-establishing SSH connection...")
-            self.bridge.establish_heartbeat()
+        if self.bridge.client is not None:
+            if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
+                logger.info("ArtifactRetriever: Re-establishing SSH connection...")
+                self.bridge.establish_heartbeat()
 
     def _get_remote_checksum(self, remote_path: str) -> str:
-        """Executes sha256sum on the HPC node and parses the hash."""
-        # Note: We use awk to extract just the hash string, ignoring the filepath
-        command = f"sha256sum '{remote_path}' | awk '{{print $1}}'"
+        """Executes sha256sum on the HPC node with shlex escaping (NODE-13)."""
+        safe_remote_path = shlex.quote(remote_path)
+        command = f"sha256sum {safe_remote_path} | awk '{{print $1}}'"
         stdin, stdout, stderr = self.bridge.client.exec_command(command)
         
         checksum = stdout.read().decode('utf-8').strip()
@@ -52,7 +57,6 @@ class ArtifactRetriever:
         """Computes SHA256 hash of the downloaded file chunk-by-chunk."""
         sha256_hash = hashlib.sha256()
         with open(local_path, "rb") as f:
-            # Read in 4K blocks to prevent Memory OOM on massive .gbw files
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
@@ -63,7 +67,7 @@ class ArtifactRetriever:
                            extensions: List[str] = ['.out', '.err', '.gbw', '.opt', '.engrad']) -> Tuple[bool, List[Path]]:
         """
         Scans the remote directory for specific file types, downloads them via SFTP,
-        and validates their cryptographic integrity.
+        and validates their cryptographic integrity. Retries up to 3 times per file (NODE-14).
         """
         self._ensure_connection()
         
@@ -71,6 +75,7 @@ class ArtifactRetriever:
             local_dir.mkdir(parents=True, exist_ok=True)
             
         retrieved_files = []
+        failed_files = []
         sftp = None
         
         try:
@@ -91,31 +96,41 @@ class ArtifactRetriever:
                 logger.warning(f"No artifacts matching {extensions} found in {remote_dir}.")
                 return False, []
 
-            # 3. Download and Verify
+            # 3. Download and Verify with Retries (NODE-14)
             for filename in targets:
                 remote_path = f"{remote_dir}/{filename}"
                 local_path = local_dir / filename
                 
                 logger.info(f"Retrieving: {filename}...")
                 
-                # Retrieve the file via SFTP
-                sftp.get(remote_path, str(local_path))
-                
-                # Integrity Verification (Suggestion 12)
-                remote_hash = self._get_remote_checksum(remote_path)
-                local_hash = self._get_local_checksum(local_path)
-                
-                if remote_hash != local_hash:
-                    logger.error(f"CRITICAL: Integrity Check Failed for {filename}!")
-                    logger.error(f"Remote: {remote_hash} | Local: {local_hash}")
-                    # Delete the corrupted local file
-                    local_path.unlink()
-                    return False, retrieved_files
-                    
-                logger.info(f"✅ Integrity Verified: {filename} ({local_hash[:8]}...)")
-                retrieved_files.append(local_path)
+                max_retries = 3
+                success = False
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        sftp.get(remote_path, str(local_path))
+                        remote_hash = self._get_remote_checksum(remote_path)
+                        local_hash = self._get_local_checksum(local_path)
+                        
+                        if remote_hash == local_hash:
+                            logger.info(f"✅ Integrity Verified: {filename} ({local_hash[:8]}...)")
+                            retrieved_files.append(local_path)
+                            success = True
+                            break
+                        else:
+                            logger.warning(f"Integrity check failed for {filename} (Attempt {attempt}/{max_retries})")
+                            if local_path.exists():
+                                local_path.unlink()
+                            time.sleep(1)
+                    except Exception as retry_err:
+                        logger.warning(f"Retry attempt {attempt} failed for {filename}: {retry_err}")
+                        time.sleep(1)
 
-            return True, retrieved_files
+                if not success:
+                    logger.error(f"CRITICAL: Failed to retrieve {filename} after {max_retries} attempts.")
+                    failed_files.append(filename)
+
+            overall_success = (len(failed_files) == 0 and len(retrieved_files) > 0)
+            return overall_success, retrieved_files
 
         except Exception as e:
             logger.error(f"Artifact retrieval encountered a fatal error: {e}")
@@ -126,15 +141,9 @@ class ArtifactRetriever:
                 sftp.close()
 
 if __name__ == "__main__":
-    # Diagnostic / Test Run
     logging.basicConfig(level=logging.INFO)
     try:
         retriever = ArtifactRetriever()
         print("Artifact Retriever initialized. Cryptographic validation module is active.")
-        # Example usage:
-        # success, files = retriever.retrieve_artifacts(
-        #     remote_dir="/scratch/user/job_12345", 
-        #     local_dir=Path("./local_outputs")
-        # )
     except Exception as e:
          print(f"Retriever Error: {e}")

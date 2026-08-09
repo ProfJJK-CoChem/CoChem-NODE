@@ -10,6 +10,26 @@ import json
 import uuid
 import logging
 from pathlib import Path
+from typing import Optional
+
+import sys
+from pathlib import Path
+from typing import Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from cochem_slurm_templater import SlurmTemplater
+    from cochem_registry_manager import get_current_config, RegistryLock
+except ImportError:
+    try:
+        from Libraries.cochem_slurm_templater import SlurmTemplater
+        from Libraries.cochem_registry_manager import get_current_config, RegistryLock
+    except ImportError:
+        from .cochem_slurm_templater import SlurmTemplater
+        from .cochem_registry_manager import get_current_config, RegistryLock
 
 class Colors:
     OKCYAN = '\033[96m'
@@ -21,45 +41,51 @@ class Colors:
 logging.basicConfig(filename='cochem_node_batcher.log', level=logging.INFO)
 
 class HPCBatcher:
-    def __init__(self):
+    def __init__(self, config=None):
+        self.config = config or get_current_config()
+        self.templater = SlurmTemplater(config=self.config)
         self.registry_path = Path("cochem_hpc_registry.json")
         self.registry = self.load_registry()
         self.max_array_size = 1000 # Standard SLURM limit constraint
 
     def load_registry(self) -> dict:
         if self.registry_path.exists():
-            with open(self.registry_path, "r") as f:
-                return json.load(f)
+            with RegistryLock(self.registry_path, timeout=5.0):
+                with open(self.registry_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
         return {"batches": {}}
 
     def save_registry(self):
-        with open(self.registry_path, "w") as f:
-            json.dump(self.registry, f, indent=4)
+        with RegistryLock(self.registry_path, timeout=5.0):
+            with open(self.registry_path, "w", encoding="utf-8") as f:
+                json.dump(self.registry, f, indent=4)
 
     def generate_sbatch_template(self, batch_uuid: str, array_count: int, module_name: str) -> str:
-        """Constructs the SLURM submission script."""
-        
-        template = f"""#!/bin/bash
-#SBATCH --job-name=CoChem_{module_name}
-#SBATCH --output=logs/{batch_uuid}_%A_%a.out
-#SBATCH --error=logs/{batch_uuid}_%A_%a.err
-#SBATCH --array=1-{array_count}
-#SBATCH --time=24:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
-#SBATCH --mem=32G
+        """
+        Constructs the SLURM submission script delegating to SlurmTemplater (NODE-16, NODE-17).
+        Dynamically queries OpenMPI version from config/registry.
+        """
+        openmpi_module = getattr(self.config.engines, 'openmpi_module', 'openmpi/4.1.8') if hasattr(self.config, 'engines') else "openmpi/4.1.8"
+        modules = [openmpi_module] if openmpi_module else []
 
-echo "Starting CoChem Task Array ID: $SLURM_ARRAY_TASK_ID"
+        execution_cmd = f"python {module_name}_payload.py --task_id $SLURM_ARRAY_TASK_ID"
 
-# Load modules based on cochem_system_config
-module load openmpi/4.1.8
+        # Delegate template rendering to SlurmTemplater (NODE-17)
+        sbatch_script = self.templater.render_job(
+            job_name=f"CoChem_{module_name}",
+            work_dir=os.getcwd(),
+            execution_command=execution_cmd,
+            engine_name=module_name,
+            requested_cores=8,
+            requested_memory_mb=32000,
+            modules_to_load=modules
+        )
 
-# Execute payload matching the array ID
-python {module_name}_payload.py --task_id $SLURM_ARRAY_TASK_ID
-
-echo "Task $SLURM_ARRAY_TASK_ID completed."
-"""
-        return template
+        # Inject job array directive into rendered script
+        lines = sbatch_script.split('\n')
+        array_line = f"#SBATCH --array=1-{array_count}"
+        lines.insert(3, array_line)
+        return '\n'.join(lines)
 
     def create_batch(self, task_list: list, module_name: str) -> list:
         """Splits tasks to respect SLURM array limits and registers them."""
@@ -82,7 +108,7 @@ echo "Task $SLURM_ARRAY_TASK_ID completed."
             with open(chunk_file, "w") as f:
                 json.dump({"tasks": chunk}, f)
                 
-            # Generate SLURM script
+            # Generate SLURM script using SlurmTemplater
             sbatch_content = self.generate_sbatch_template(batch_uuid, array_count, module_name)
             sbatch_file = out_dir / f"submit_{batch_uuid}.sbatch"
             with open(sbatch_file, "w") as f:
@@ -106,10 +132,7 @@ def main():
     print(f"\n{Colors.OKCYAN}--- CoChem-NODE: Array Batcher ---{Colors.ENDC}")
     
     batcher = HPCBatcher()
-    
-    # Mocking 2,500 target isomers from the TOPOS pipeline
     mock_tasks = [f"isomer_{i}.xyz" for i in range(2500)]
-    
     scripts = batcher.create_batch(mock_tasks, "GOAT_Opt")
     
     print(f"{Colors.OKGREEN}✅ Safely divided into {len(scripts)} SLURM arrays to prevent scheduler timeout.{Colors.ENDC}")

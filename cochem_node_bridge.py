@@ -9,6 +9,8 @@ import os
 import sys
 import json
 import logging
+import shlex
+import re
 from pathlib import Path
 
 try:
@@ -32,31 +34,33 @@ class NodeBridge:
         self.client = None
         
     def load_config(self) -> dict:
-        path = Path("cochem_system_config.json")
-        if not path.exists():
-            logging.warning("System config missing. Using default local-fallback mock data.")
-            return {"hpc": {"host": "mock_cluster", "user": "mock_user"}}
-        with open(path, "r") as f:
-            return json.load(f)
+        for fname in ["cochem_system_config.json", "cochem_node_config.json"]:
+            path = Path(fname)
+            if path.exists():
+                with open(path, "r") as f:
+                    return json.load(f)
+        return {"hpc": {"host": "", "user": ""}}
 
     def connect(self) -> bool:
         """Establishes the SSH Heartbeat using RSA/Ed25519 keys."""
         hpc_cfg = self.config.get("hpc", {})
-        host = hpc_cfg.get("host")
-        user = hpc_cfg.get("user")
+        host = hpc_cfg.get("host") or hpc_cfg.get("cluster_hostname")
+        user = hpc_cfg.get("user") or hpc_cfg.get("username")
         
         if not SSH_AVAILABLE:
-            print(f"{Colors.WARNING}⚠️ 'paramiko' not installed. Running in Dry-Run/Mock Mode.{Colors.ENDC}")
+            logging.info("Paramiko module not available. Local dispatch mode active.")
             return False
 
         if not host or host == "mock_cluster":
-            print(f"{Colors.WARNING}⚠️ HPC credentials not configured in registry. Bypassing SSH.{Colors.ENDC}")
+            logging.info("HPC credentials not configured in registry. Local queue mode active.")
             return False
 
         print(f"🔌 Establishing Heartbeat to {user}@{host}...")
         try:
             self.client = paramiko.SSHClient()
-            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Enforce strict security policy by loading system host keys and rejecting unverified hosts (NODE-08)
+            self.client.load_system_host_keys()
+            self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
             # Assumes key-based auth via ssh-agent
             self.client.connect(hostname=host, username=user, timeout=10)
             print(f"{Colors.OKGREEN}✅ Heartbeat Established.{Colors.ENDC}")
@@ -68,14 +72,38 @@ class NodeBridge:
 
     def check_remote_queue(self, username: str) -> list:
         """
-        Executes a remote squeue check.
+        Executes a remote squeue check, or local process/queue query if remote client is uninitialized.
         Uses explicit pipe-delimited formatting to prevent column shift bugs.
+        Sanitizes username parameter against shell injection (NODE-09).
         """
-        if not self.client:
-            logging.info("Mock Mode: Simulating remote queue check.")
-            return [{"jobid": "9999", "name": "cochem_sim", "state": "RUNNING"}]
+        if not re.match(r'^[a-zA-Z0-9_\-\.]+$', username):
+            raise ValueError(f"Invalid username for queue check: '{username}'")
 
-        cmd = f"squeue -u {username} -o '%i|%j|%T|%M|%D'"
+        if not self.client:
+            # Query local slurm queue if sbatch/squeue is installed locally
+            import subprocess
+            try:
+                res = subprocess.run(["squeue", "-u", username, "-o", "%i|%j|%T|%M|%D"], capture_output=True, text=True, timeout=5)
+                if res.returncode == 0 and res.stdout.strip():
+                    raw_lines = res.stdout.strip().split('\n')
+                    local_jobs = []
+                    for line in raw_lines[1:]:
+                        parts = line.split('|')
+                        if len(parts) >= 5:
+                            local_jobs.append({
+                                "jobid": parts[0].strip(),
+                                "name": parts[1].strip(),
+                                "state": parts[2].strip(),
+                                "time": parts[3].strip(),
+                                "nodes": parts[4].strip()
+                            })
+                    return local_jobs
+            except Exception as err:
+                logging.debug(f"Local squeue query skipped: {err}")
+            return []
+
+        safe_user = shlex.quote(username)
+        cmd = f"squeue -u {safe_user} -o '%i|%j|%T|%M|%D'"
         stdin, stdout, stderr = self.client.exec_command(cmd)
         
         raw_output = stdout.read().decode('utf-8').strip().split('\n')

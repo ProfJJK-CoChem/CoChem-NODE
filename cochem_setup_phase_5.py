@@ -15,12 +15,16 @@ import logging
 from pathlib import Path
 
 # Add project root to sys.path to allow imports from Libraries
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from Libraries.cochem_registry_manager import RegistryManager
-from Libraries.cochem_registry_schema import CoChemConfig, HardwareConfig, EnginePaths, HPCConfig
+try:
+    from cochem_registry_manager import RegistryManager
+    from cochem_registry_schema import CoChemConfig, HardwareConfig, EnginePaths, HPCConfig
+except ImportError:
+    from Libraries.cochem_registry_manager import RegistryManager
+    from Libraries.cochem_registry_schema import CoChemConfig, HardwareConfig, EnginePaths, HPCConfig
 
 class Colors:
     OKCYAN = '\033[96m'

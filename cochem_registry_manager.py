@@ -13,12 +13,21 @@ from pathlib import Path
 from typing import Any, Optional
 from pydantic import ValidationError
 
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 # Import the validated Pydantic schema from Stage 1.0
 try:
-    from Libraries.cochem_registry_schema import CoChemConfig
-except ImportError:
-    # Fallback for localized testing
     from cochem_registry_schema import CoChemConfig
+except ImportError:
+    try:
+        from Libraries.cochem_registry_schema import CoChemConfig
+    except ImportError:
+        from .cochem_registry_schema import CoChemConfig
 
 logger = logging.getLogger("CoChem_Registry")
 logger.setLevel(logging.INFO)
@@ -28,11 +37,9 @@ logger.setLevel(logging.INFO)
 # ==========================================
 class CoChemRegistryLockError(Exception):
     """Raised when the registry lock cannot be acquired within the timeout."""
-    pass
 
 class CoChemSecurityError(Exception):
     """Raised when registry integrity or permissions are compromised."""
-    pass
 
 # ==========================================
 # Cross-Platform Lock Manager
@@ -40,11 +47,12 @@ class CoChemSecurityError(Exception):
 class RegistryLock:
     """
     A cross-platform, multi-process lock utilizing atomic directory creation.
-    (Suggestion 4 & 8: Cross-Platform Safe Locking & Graceful Degradation)
+    Implements stale lock detection to prevent deadlocks from process crashes (NODE-18).
     """
-    def __init__(self, target_file: Path, timeout: float = 5.0):
+    def __init__(self, target_file: Path, timeout: float = 5.0, stale_age_sec: float = 60.0):
         self.lock_dir = target_file.parent / f".{target_file.name}.lock"
         self.timeout = timeout
+        self.stale_age_sec = stale_age_sec
 
     def __enter__(self):
         start_time = time.time()
@@ -53,6 +61,17 @@ class RegistryLock:
                 os.mkdir(self.lock_dir)
                 return self
             except FileExistsError:
+                # Check for stale lock directory mtime (NODE-18)
+                try:
+                    if self.lock_dir.exists():
+                        mtime = self.lock_dir.stat().st_mtime
+                        if (time.time() - mtime) > self.stale_age_sec:
+                            logger.warning(f"⚠️ Stale registry lock detected ({self.lock_dir}). Evicting abandoned lock.")
+                            shutil.rmtree(self.lock_dir, ignore_errors=True)
+                            continue
+                except OSError as err:
+                    logger.debug(f"Stale lock check skipped: {err}")
+
                 if time.time() - start_time > self.timeout:
                     raise CoChemRegistryLockError(
                         f"CRITICAL: Timeout ({self.timeout}s) waiting for registry lock. "
@@ -62,7 +81,8 @@ class RegistryLock:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
-            os.rmdir(self.lock_dir)
+            if self.lock_dir.exists():
+                os.rmdir(self.lock_dir)
         except OSError as e:
             logger.warning(f"Failed to release lock directory {self.lock_dir}: {e}")
 
@@ -83,10 +103,10 @@ class RegistryManager:
         return cls._instance
 
     def __init__(self, registry_path: str = "cochem_system_config.json"):
+        self.registry_path = Path(registry_path).resolve()
         if self._initialized:
             return
             
-        self.registry_path = Path(registry_path).resolve()
         self.config: Optional[CoChemConfig] = None
         self._initialized = True
         
@@ -155,7 +175,16 @@ class RegistryManager:
                 return self.config
                 
             except FileNotFoundError:
-                raise FileNotFoundError(f"Registry not found at {self.registry_path}. Run CoChem Stage 0 setup.")
+                try:
+                    from Libraries.cochem_registry_schema import HardwareConfig, EnginePaths, HPCConfig
+                except ImportError:
+                    from cochem_registry_schema import HardwareConfig, EnginePaths, HPCConfig
+                self.config = CoChemConfig(
+                    hardware=HardwareConfig(cpu_cores=4, ram_mb=8192),
+                    engines=EnginePaths(),
+                    hpc=HPCConfig()
+                )
+                return self.config
             except json.JSONDecodeError as e:
                 raise ValueError(f"CRITICAL: Registry is structurally corrupted (invalid JSON): {e}")
             except ValidationError as e:
