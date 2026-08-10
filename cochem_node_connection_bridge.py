@@ -44,8 +44,8 @@ class NodeBridge:
         self.config = config or get_current_config()
         self.hpc_config = self.config.hpc
         
-        if not self.hpc_config.cluster_hostname or self.hpc_config.cluster_hostname == "mock_cluster":
-            logger.info("NodeBridge: HPC cluster hostname unconfigured. Operating in local queue mode.")
+        if self.hpc_config.execution_mode == "local":
+            logger.info("NodeBridge: execution_mode='local'. Operating in local queue mode.")
             self.client = None
         elif PARAMIKO_AVAILABLE:
             self.client = paramiko.SSHClient()
@@ -92,6 +92,9 @@ class NodeBridge:
         Validates the remote environment before permitting job submissions.
         Checks for Slurm (sbatch) and the defined computational engine.
         """
+        if self.client is None:
+            return True, "Local mode active; SSH bypassed."
+
         if self.client.get_transport() is None or not self.client.get_transport().is_active():
             self.establish_heartbeat()
 

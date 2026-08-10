@@ -51,8 +51,8 @@ class NodeBridge:
             logging.info("Paramiko module not available. Local dispatch mode active.")
             return False
 
-        if not host or host == "mock_cluster":
-            logging.info("HPC credentials not configured in registry. Local queue mode active.")
+        if not host or hpc_cfg.get("execution_mode") == "local":
+            logging.info("HPC credentials not configured or execution_mode is local. Local queue mode active.")
             return False
 
         print(f"🔌 Establishing Heartbeat to {user}@{host}...")
@@ -135,7 +135,8 @@ def main():
     connected = bridge.connect()
     
     # Run a diagnostic ping regardless of actual connection status
-    user = bridge.config.get("hpc", {}).get("user", "mock_user")
+    hpc_cfg = bridge.config.get("hpc", {})
+    user = hpc_cfg.get("user") or hpc_cfg.get("username", os.getlogin())
     jobs = bridge.check_remote_queue(user)
     
     print(f"📊 Active Jobs for '{user}': {len(jobs)}")

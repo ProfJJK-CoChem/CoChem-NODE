@@ -6,7 +6,9 @@ using exponential backoff to prevent SSH connection bans.
 
 import time
 import logging
+import os
 import shlex
+import subprocess
 from typing import Tuple, Optional
 from pathlib import Path
 
@@ -48,7 +50,7 @@ class SlurmWatchdog:
         Queries sacct to verify exact exit status when job is missing from squeue (NODE-15).
         """
         if self.bridge.client is None:
-            return "COMPLETED"
+            return self._query_local_job_status(job_id)
 
         safe_job_id = shlex.quote(str(job_id))
         command = f"sacct -j {safe_job_id} -h -o State"
@@ -64,8 +66,8 @@ class SlurmWatchdog:
         except Exception as e:
             logger.warning(f"sacct fallback query failed for job {job_id}: {e}")
             
-        # Default fallback
-        return "COMPLETED"
+        # Default fallback: status truly unknown — do NOT assume COMPLETED (MOCK-17)
+        return "UNKNOWN"
 
     def check_job_status(self, job_id: str) -> str:
         """
@@ -74,7 +76,7 @@ class SlurmWatchdog:
         """
         self._ensure_connection()
         if self.bridge.client is None:
-            return "COMPLETED"
+            return self._query_local_job_status(job_id)
             
         safe_job_id = shlex.quote(str(job_id))
         command = f"squeue -j {safe_job_id} -h -O State"
@@ -142,6 +144,55 @@ class SlurmWatchdog:
             logger.info(f"Job {job_id} status: {status}. Next check in {int(self.current_delay)} seconds...")
             time.sleep(self.current_delay)
             self.current_delay = min(self.current_delay * self.backoff_factor, self.max_delay)
+
+    def _query_local_job_status(self, job_id: str) -> str:
+        """
+        MOCK-17 fix: queries local process table or job log exit codes
+        instead of blindly returning "COMPLETED".
+
+        Checks:
+            1. Job log directory for an exit code marker file.
+            2. Local process table (Unix: ``ps``; Windows: ``tasklist``).
+        Returns one of: COMPLETED, FAILED, RUNNING, UNKNOWN.
+        """
+        # 1. Check for job log exit code files written by the payload wrapper
+        log_candidates = [
+            Path("HPC_Payloads") / "logs" / f"{job_id}.exit",
+            Path("cochem_node_data") / "logs" / f"{job_id}.exit",
+        ]
+        for exit_file in log_candidates:
+            if exit_file.is_file():
+                try:
+                    exit_code = int(exit_file.read_text().strip())
+                    if exit_code == 0:
+                        logger.info(f"Local job {job_id}: exit code 0 → COMPLETED.")
+                        return "COMPLETED"
+                    else:
+                        logger.error(f"Local job {job_id}: exit code {exit_code} → FAILED.")
+                        return "FAILED"
+                except (ValueError, OSError) as exc:
+                    logger.warning(f"Could not parse exit file {exit_file}: {exc}")
+
+        # 2. Check local process table for a running process matching the job_id
+        try:
+            if os.name == "nt":
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"WINDOWTITLE eq {job_id}"],
+                    capture_output=True, text=True, timeout=5
+                )
+            else:
+                result = subprocess.run(
+                    ["ps", "aux"],
+                    capture_output=True, text=True, timeout=5
+                )
+            if job_id in result.stdout:
+                logger.info(f"Local job {job_id} found in process table → RUNNING.")
+                return "RUNNING"
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            logger.warning(f"Could not query local process table: {exc}")
+
+        logger.warning(f"Local job {job_id}: no exit file or running process found → UNKNOWN.")
+        return "UNKNOWN"
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

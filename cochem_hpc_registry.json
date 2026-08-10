@@ -146,6 +146,20 @@
             "task_count": 25,
             "sbatch_file": "HPC_Payloads\\submit_8cb139e6.sbatch",
             "remote_job_id": null
+        },
+        "de072923": {
+            "module": "TestEngine",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_de072923.sbatch",
+            "remote_job_id": null
+        },
+        "acef244b": {
+            "module": "TestModule",
+            "status": "STAGED",
+            "task_count": 25,
+            "sbatch_file": "HPC_Payloads\\submit_acef244b.sbatch",
+            "remote_job_id": null
         }
     }
 }

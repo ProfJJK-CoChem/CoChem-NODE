@@ -91,8 +91,8 @@ class NODEOrchestrator:
             job_name = params.get("job_name", "job_default")
             input_file = Path(params.get("input_file", "input.inp"))
             work_dir = params.get("work_dir", "/scratch/default")
-            engine = params.get("engine", "ORCA")
-            cmd = params.get("cmd", "orca input.inp > output.out")
+            engine = params.get("engine", "MPQC")
+            cmd = params.get("cmd", "mpqc input.inp > output.out")
             cores = params.get("cores", 4)
             mem = params.get("mem", 4000)
             success, job_id_or_err = self.dispatcher.dispatch_job(

@@ -67,6 +67,7 @@ class HPCBatcher:
         """
         openmpi_module = getattr(self.config.engines, 'openmpi_module', 'openmpi/4.1.8') if hasattr(self.config, 'engines') else "openmpi/4.1.8"
         modules = [openmpi_module] if openmpi_module else []
+        modules.extend(['mpqc', 'libint', 'madness'])
 
         execution_cmd = f"python {module_name}_payload.py --task_id $SLURM_ARRAY_TASK_ID"
 
@@ -128,15 +129,68 @@ class HPCBatcher:
         self.save_registry()
         return generated_scripts
 
+def load_candidate_geometries(search_dir: Optional[Path] = None) -> list:
+    """
+    Reads candidate geometry files (.xyz) from the active workspace or
+    job queue directory. Returns a list of absolute path strings suitable
+    for batching.
+    
+    MOCK-16 fix: replaces hardcoded 2500 fake 'isomer_i.xyz' task generation.
+
+    Search order:
+        1. Explicit ``search_dir`` argument.
+        2. ``./cochem_node_data/jobs/`` (standard NODE job queue).
+        3. ``./HPC_Payloads/`` (legacy payload staging area).
+    """
+    candidate_dirs = [
+        search_dir,
+        Path("cochem_node_data") / "jobs",
+        Path("HPC_Payloads"),
+    ]
+    
+    for candidate in candidate_dirs:
+        if candidate is None:
+            continue
+        candidate = Path(candidate).resolve()
+        if candidate.is_dir():
+            xyz_files = sorted(candidate.glob("**/*.xyz"))
+            if xyz_files:
+                logging.info(f"Loaded {len(xyz_files)} candidate geometries from {candidate}")
+                return [str(f) for f in xyz_files]
+    
+    logging.warning("No candidate .xyz geometry files found in any search directory.")
+    return []
+
+
 def main():
     print(f"\n{Colors.OKCYAN}--- CoChem-NODE: Array Batcher ---{Colors.ENDC}")
     
-    batcher = HPCBatcher()
-    mock_tasks = [f"isomer_{i}.xyz" for i in range(2500)]
-    scripts = batcher.create_batch(mock_tasks, "GOAT_Opt")
+    import argparse
+    parser = argparse.ArgumentParser(description="CoChem-NODE Job Array Batcher")
+    parser.add_argument(
+        "--geometry-dir", type=str, default=None,
+        help="Path to directory containing .xyz candidate geometries"
+    )
+    parser.add_argument(
+        "--module", type=str, default="GOAT_Opt",
+        help="HPC module name for SLURM job (default: GOAT_Opt)"
+    )
+    args = parser.parse_args()
+
+    search_path = Path(args.geometry_dir) if args.geometry_dir else None
+    tasks = load_candidate_geometries(search_dir=search_path)
+
+    if not tasks:
+        print(f"{Colors.FAIL}❌ No .xyz geometry files found. "
+              f"Provide a --geometry-dir or populate ./cochem_node_data/jobs/.{Colors.ENDC}")
+        sys.exit(1)
     
-    print(f"{Colors.OKGREEN}✅ Safely divided into {len(scripts)} SLURM arrays to prevent scheduler timeout.{Colors.ENDC}")
+    batcher = HPCBatcher()
+    scripts = batcher.create_batch(tasks, args.module)
+    
+    print(f"{Colors.OKGREEN}✅ Safely divided {len(tasks)} tasks into "
+          f"{len(scripts)} SLURM arrays to prevent scheduler timeout.{Colors.ENDC}")
     print(f"📁 Payloads saved to ./HPC_Payloads. Ready for Bridge dispatch.\n")
 
 if __name__ == "__main__":
-    main()
+    main()
