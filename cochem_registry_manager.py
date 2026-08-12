@@ -49,12 +49,12 @@ class RegistryLock:
     A cross-platform, multi-process lock utilizing atomic directory creation.
     Implements stale lock detection to prevent deadlocks from process crashes (NODE-18).
     """
-    def __init__(self, target_file: Path, timeout: float = 5.0, stale_age_sec: float = 60.0):
+    def __init__(self, target_file: Path, timeout: float = 5.0, stale_age_sec: float = 60.0) -> None:
         self.lock_dir = target_file.parent / f".{target_file.name}.lock"
         self.timeout = timeout
         self.stale_age_sec = stale_age_sec
 
-    def __enter__(self):
+    def __enter__(self) -> "RegistryLock":
         start_time = time.time()
         while True:
             try:
@@ -79,7 +79,7 @@ class RegistryLock:
                     )
                 time.sleep(0.1) # NFS-aware polling delay
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         try:
             if self.lock_dir.exists():
                 os.rmdir(self.lock_dir)
@@ -96,13 +96,13 @@ class RegistryManager:
     """
     _instance = None
     
-    def __new__(cls, registry_path: str = "cochem_system_config.json"):
+    def __new__(cls, registry_path: str = "cochem_system_config.json") -> "RegistryManager":
         if cls._instance is None:
             cls._instance = super(RegistryManager, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, registry_path: str = "cochem_system_config.json"):
+    def __init__(self, registry_path: str = "cochem_system_config.json") -> None:
         self.registry_path = Path(registry_path).resolve()
         if self._initialized:
             return
@@ -127,14 +127,14 @@ class RegistryManager:
             return os.path.expandvars(data)
         return data
 
-    def _enforce_permissions(self):
+    def _enforce_permissions(self) -> None:
         """Forces strict 0600 (rw-------) permissions on the registry. (Suggestion 1)"""
         try:
             os.chmod(self.registry_path, 0o600)
         except OSError as e:
             logger.warning(f"Could not enforce strict OS permissions on {self.registry_path}: {e}")
 
-    def _rotate_backups(self):
+    def _rotate_backups(self) -> None:
         """Maintains a rolling buffer of 5 registry backups. (Suggestion 5)"""
         if not self.registry_path.exists():
             return
@@ -160,7 +160,7 @@ class RegistryManager:
         with RegistryLock(self.registry_path, timeout=5.0):
             try:
                 with open(self.registry_path, 'r', encoding='utf-8') as f:
-                    raw_data = json.load(f)
+                    raw_data = json.loads(f.read())
                 
                 # Resolve ${ENV_VARS}
                 interpolated_data = self._interpolate_env_vars(raw_data)
@@ -188,7 +188,7 @@ class RegistryManager:
             except json.JSONDecodeError as e:
                 raise ValueError(f"CRITICAL: Registry is structurally corrupted (invalid JSON): {e}")
             except ValidationError as e:
-                logger.error(f"SCHEMA VALIDATION FAILED:\n{e.json(indent=2)}")
+                logger.error("SCHEMA VALIDATION FAILED:" + "\n" + f"{e.json(indent=2)}")
                 raise
 
     def save(self) -> None:
@@ -247,9 +247,9 @@ def get_current_config(path: str = "cochem_system_config.json") -> CoChemConfig:
 
 if __name__ == "__main__":
     # Diagnostic / Test Run
-    print("Initializing Registry Manager...")
+    logger.info("Initializing Registry Manager...")
     try:
         manager = RegistryManager("cochem_system_config.json")
-        print("Registry Manager loaded successfully. Golden Gatekeeper is active.")
+        logger.info("Registry Manager loaded successfully. Golden Gatekeeper is active.")
     except Exception as e:
-        print(f"Initialization Failed: {e}")
+        logger.error(f"Initialization Failed: {e}")

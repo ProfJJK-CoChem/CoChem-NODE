@@ -38,10 +38,11 @@ class Colors:
     FAIL = '\033[91m'
     ENDC = '\033[0m'
 
+logger = logging.getLogger("CoChem_NODE_Batcher")
 logging.basicConfig(filename='cochem_node_batcher.log', level=logging.INFO)
 
 class HPCBatcher:
-    def __init__(self, config=None):
+    def __init__(self, config: Any = None) -> None:
         self.config = config or get_current_config()
         self.templater = SlurmTemplater(config=self.config)
         self.registry_path = Path("cochem_hpc_registry.json")
@@ -52,10 +53,10 @@ class HPCBatcher:
         if self.registry_path.exists():
             with RegistryLock(self.registry_path, timeout=5.0):
                 with open(self.registry_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    return json.loads(f.read())
         return {"batches": {}}
 
-    def save_registry(self):
+    def save_registry(self) -> None:
         with RegistryLock(self.registry_path, timeout=5.0):
             with open(self.registry_path, "w", encoding="utf-8") as f:
                 json.dump(self.registry, f, indent=4)
@@ -91,7 +92,7 @@ class HPCBatcher:
     def create_batch(self, task_list: list, module_name: str) -> list:
         """Splits tasks to respect SLURM array limits and registers them."""
         total_tasks = len(task_list)
-        print(f"📦 Batching {total_tasks} tasks for HPC module: {module_name}")
+        logger.info(f"Batching {total_tasks} tasks for HPC module: {module_name}")
         
         generated_scripts = []
         chunks = [task_list[i:i + self.max_array_size] for i in range(0, total_tasks, self.max_array_size)]
@@ -124,7 +125,7 @@ class HPCBatcher:
                 "remote_job_id": None # Populated after dispatch
             }
             generated_scripts.append(sbatch_file)
-            print(f"   ↳ Generated Array [{idx+1}/{len(chunks)}] -> UUID: {batch_uuid} ({array_count} tasks)")
+            logger.info(f"   Generated Array [{idx+1}/{len(chunks)}] -> UUID: {batch_uuid} ({array_count} tasks)")
             
         self.save_registry()
         return generated_scripts
@@ -162,8 +163,8 @@ def load_candidate_geometries(search_dir: Optional[Path] = None) -> list:
     return []
 
 
-def main():
-    print(f"\n{Colors.OKCYAN}--- CoChem-NODE: Array Batcher ---{Colors.ENDC}")
+def main() -> None:
+    logger.info("--- CoChem-NODE: Array Batcher ---")
     
     import argparse
     parser = argparse.ArgumentParser(description="CoChem-NODE Job Array Batcher")
@@ -181,16 +182,14 @@ def main():
     tasks = load_candidate_geometries(search_dir=search_path)
 
     if not tasks:
-        print(f"{Colors.FAIL}❌ No .xyz geometry files found. "
-              f"Provide a --geometry-dir or populate ./cochem_node_data/jobs/.{Colors.ENDC}")
+        logger.error("No .xyz geometry files found. Provide a --geometry-dir or populate ./cochem_node_data/jobs/.")
         sys.exit(1)
     
     batcher = HPCBatcher()
     scripts = batcher.create_batch(tasks, args.module)
     
-    print(f"{Colors.OKGREEN}✅ Safely divided {len(tasks)} tasks into "
-          f"{len(scripts)} SLURM arrays to prevent scheduler timeout.{Colors.ENDC}")
-    print(f"📁 Payloads saved to ./HPC_Payloads. Ready for Bridge dispatch.\n")
+    logger.info(f"Safely divided {len(tasks)} tasks into {len(scripts)} SLURM arrays to prevent scheduler timeout.")
+    logger.info("Payloads saved to ./HPC_Payloads. Ready for Bridge dispatch.")
 
 if __name__ == "__main__":
     main()

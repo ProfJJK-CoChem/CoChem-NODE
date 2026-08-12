@@ -51,7 +51,7 @@ class NODEConfig:
         "T4-1mo": 1
     }
 
-    def __init__(self, config_file: str = "cochem_system_config.json"):
+    def __init__(self, config_file: str = "cochem_system_config.json") -> None:
         """Initialize configuration connected to global RegistryManager."""
         self.config_file = config_file
         self.registry_manager = RegistryManager(registry_path=config_file)
@@ -127,16 +127,16 @@ class NODEConfig:
         """Validate whether a tier string is a recognized v4 tier."""
         return tier_name in self.TIER_WALLTIME_MAP
 
-    def get(self, key: str, default=None):
+    def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key."""
         return self.config.get(key, default)
         
-    def set(self, key: str, value):
+    def set(self, key: str, value: Any) -> None:
         """Set configuration value."""
         self.config[key] = value
         self._save_config()
         
-    def _save_config(self):
+    def _save_config(self) -> None:
         """Save current configuration using RegistryManager."""
         try:
             if hasattr(self.registry_manager, 'config') and self.registry_manager.config is not None:
@@ -144,16 +144,16 @@ class NODEConfig:
         except Exception as e:
             logger.warning(f"Warning saving via RegistryManager: {e}")
             
-    def update_from_dict(self, updates: dict):
+    def update_from_dict(self, updates: dict) -> None:
         """Update configuration from dictionary."""
         self.config.update(updates)
         self._save_config()
 
-def main():
+def main() -> None:
     """Main entry point for configuration module."""
-    print("Initializing CoChem-NODE v4 Configuration")
+    logger.info("Initializing CoChem-NODE v4 Configuration")
     config = NODEConfig()
-    print("Loaded v4 Configuration. Tiers:", list(config.TIER_WALLTIME_MAP.keys()))
+    logger.info(f"Loaded v4 Configuration. Tiers: {list(config.TIER_WALLTIME_MAP.keys())}")
 
 if __name__ == "__main__":
     main()

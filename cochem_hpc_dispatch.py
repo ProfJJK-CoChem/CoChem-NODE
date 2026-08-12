@@ -34,7 +34,7 @@ class ScoutAnchorCoScheduler:
     Heterogeneous Scout-and-Anchor Co-Scheduler (§8A.2).
     Manages concurrent CPU anchor (7 P-cores) and GPU scout (1 P-core + MPS) task pairs.
     """
-    def __init__(self, templater: SlurmTemplater):
+    def __init__(self, templater: SlurmTemplater) -> None:
         self.templater = templater
         self.max_cpu_contention_ratio = 1.20  # Mandated bound (§8A.2)
 
@@ -85,7 +85,7 @@ class HPCDispatcher:
     """
     Handles single job dispatch and Scout-and-Anchor co-scheduled submission via NodeBridge.
     """
-    def __init__(self, bridge: Optional[NodeBridge] = None):
+    def __init__(self, bridge: Optional[NodeBridge] = None) -> None:
         self.config = get_current_config()
         self.bridge = bridge or NodeBridge(self.config)
         self.templater = SlurmTemplater(config=self.config)
@@ -199,5 +199,5 @@ class HPCDispatcher:
             "scout_script_preview": scout_script[:200]
         }
 
-    def teardown(self):
+    def teardown(self) -> None:
         self.bridge.disconnect()

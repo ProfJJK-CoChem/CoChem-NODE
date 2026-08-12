@@ -58,7 +58,7 @@ class RegistryJobHealer:
         self,
         bridge: Optional[NodeBridge] = None,
         registry_path: Optional[Path] = None,
-    ):
+    ) -> None:
         self._registry_path = Path(registry_path or "cochem_hpc_registry.json")
         self._registry: Dict = self._load_registry()
 
@@ -261,8 +261,8 @@ if __name__ == "__main__":
     try:
         healer = RegistryJobHealer()
         result = healer.heal()
-        print(f"\n✅ Registry Healer completed. {len(result)} batches tracked.")
+        logger.info(f"Registry Healer completed. {len(result)} batches tracked.")
         for uid, status in result.items():
-            print(f"   {uid}: {status}")
+            logger.info(f"   {uid}: {status}")
     except Exception as e:
-        print(f"❌ Registry Healer error: {e}")
+        logger.error(f"Registry Healer error: {e}")

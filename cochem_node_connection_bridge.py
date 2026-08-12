@@ -40,7 +40,7 @@ class NodeBridge:
     """
     Establishes and validates the secure connection to the HPC cluster.
     """
-    def __init__(self, config: Optional[CoChemConfig] = None):
+    def __init__(self, config: Optional[CoChemConfig] = None) -> None:
         self.config = config or get_current_config()
         self.hpc_config = self.config.hpc
         
@@ -123,7 +123,7 @@ class NodeBridge:
 
         return True, "Pre-flight checks passed."
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """Safely tears down the SSH socket."""
         if self.client:
             self.client.close()
@@ -136,7 +136,7 @@ if __name__ == "__main__":
         success = bridge.establish_heartbeat()
         if success:
             status, msg = bridge.execute_preflight_checks()
-            print(msg)
+            logger.info(msg)
             bridge.disconnect()
     except Exception as e:
-        print(f"HPC Bridge Error: {e}")
+        logger.error(f"HPC Bridge Error: {e}")

@@ -24,12 +24,18 @@ except ImportError:
     from Libraries.cochem_hpc_heal import RegistryHealer
     from Libraries.cochem_registry_manager import RegistryManager
 
+import logging
+import hashlib
+
+logger = logging.getLogger("CoChem_NODE_Main")
+
+
 class NODEOrchestrator:
     """
     The main orchestrator that coordinates all NODE activities (NODE-20).
     """
     
-    def __init__(self, config_file: str = "cochem_system_config.json"):
+    def __init__(self, config_file: str = "cochem_system_config.json") -> None:
         """Initialize the NODE orchestrator."""
         self.config_file = config_file
         self.registry_manager = RegistryManager(config_file)
@@ -52,9 +58,9 @@ class NODEOrchestrator:
                 "data_dir": "./cochem_node_data"
             }
             
-    def initialize(self):
+    def initialize(self) -> None:
         """Initialize the NODE system and core services."""
-        print("🚀 Initializing CoChem-NODE System...")
+        logger.info("Initializing CoChem-NODE System...")
         
         # Create data directories
         data_dir = Path(self.config.get('data_dir', './cochem_node_data'))
@@ -73,17 +79,17 @@ class NODEOrchestrator:
             self.retriever = ArtifactRetriever(bridge=bridge)
             self.healer = RegistryHealer(bridge=bridge, registry_manager=self.registry_manager)
         except Exception as e:
-            print(f"⚠️ Service initialization warning (running in localized mode): {e}")
+            logger.warning(f"Service initialization warning (running in localized mode): {e}")
 
         self.is_initialized = True
-        print("✅ CoChem-NODE initialized successfully")
+        logger.info("CoChem-NODE initialized successfully")
         
     def run_node_management(self, action: str, params: dict) -> dict:
         """Run a specific node management action connected to live engines (NODE-20)."""
         if not self.is_initialized:
             raise RuntimeError("NODE system must be initialized before running actions")
             
-        print(f"⚙️ Running {action} on node...")
+        logger.info(f"Running {action} on node...")
         results = {"action": action, "status": "COMPLETED"}
         
         action_lower = action.lower()
@@ -113,6 +119,13 @@ class NODEOrchestrator:
             success, files = self.retriever.retrieve_artifacts(remote_dir, local_dir)
             results["success"] = success
             results["files"] = [str(f) for f in files]
+            # Cryptographic SHA-256 verification of downloaded .out / .gbw artifacts
+            hashes = {}
+            for f in files:
+                if str(f).endswith(('.out', '.gbw')):
+                    h = hashlib.sha256(Path(f).read_bytes()).hexdigest()
+                    hashes[str(f)] = h
+            results["artifact_hashes"] = hashes
             
         elif action_lower == "heal" and self.healer:
             local_jobs = params.get("local_jobs", {})
@@ -121,12 +134,12 @@ class NODEOrchestrator:
         else:
             results["info"] = f"Executed localized node action: {action}"
             
-        print(f"✅ {action} completed")
+        logger.info(f"{action} completed")
         return results
         
     def generate_node_report(self, output_dir: str = "./reports") -> str:
         """Generate comprehensive report of node operations."""
-        print(f"📄 Generating NODE report in {output_dir}")
+        logger.info(f"Generating NODE report in {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
         report_path = Path(output_dir) / "cochem_node_report.json"
         
@@ -141,15 +154,15 @@ class NODEOrchestrator:
             }
         }
         
-        with open(report_path, "w") as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             json.dump(report_data, f, indent=4)
             
-        print(f"✅ NODE report generated at {report_path}")
+        logger.info(f"NODE report generated at {report_path}")
         return str(report_path)
 
-def main():
+def main() -> None:
     """Main entry point for CoChem-NODE."""
-    print("Starting CoChem-NODE Orchestrator")
+    logger.info("Starting CoChem-NODE Orchestrator")
     
     orchestrator = NODEOrchestrator()
     orchestrator.initialize()

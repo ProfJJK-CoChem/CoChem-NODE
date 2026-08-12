@@ -30,7 +30,7 @@ class SlurmWatchdog:
     """
     Monitors HPC job status via `squeue` with exponential backoff.
     """
-    def __init__(self, bridge: Optional[NodeBridge] = None):
+    def __init__(self, bridge: Optional[NodeBridge] = None) -> None:
         self.bridge = bridge or NodeBridge()
         
         # Exponential Backoff Parameters
@@ -39,7 +39,7 @@ class SlurmWatchdog:
         self.backoff_factor = 1.5  # Multiplier for each subsequent check
         self.current_delay = self.base_delay
 
-    def _ensure_connection(self):
+    def _ensure_connection(self) -> None:
         if self.bridge.client is not None:
             if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
                 logger.info("Watchdog: Re-establishing SSH connection...")
@@ -175,29 +175,39 @@ class SlurmWatchdog:
 
         # 2. Check local process table for a running process matching the job_id
         try:
+            try:
+                from core_engine.cochem_core_subprocess_broker import safe_subprocess_run
+            except ImportError:
+                for p in Path(__file__).resolve().parents:
+                    cb = p / "CoChem-BASE"
+                    if cb.exists() and str(cb) not in sys.path:
+                        sys.path.insert(0, str(cb))
+                        break
+                from core_engine.cochem_core_subprocess_broker import safe_subprocess_run
+
             if os.name == "nt":
-                result = subprocess.run(
+                result = safe_subprocess_run(
                     ["tasklist", "/FI", f"WINDOWTITLE eq {job_id}"],
-                    capture_output=True, text=True, timeout=5
+                    check=False, capture_output=True, text=True, timeout=5.0
                 )
             else:
-                result = subprocess.run(
+                result = safe_subprocess_run(
                     ["ps", "aux"],
-                    capture_output=True, text=True, timeout=5
+                    check=False, capture_output=True, text=True, timeout=5.0
                 )
-            if job_id in result.stdout:
-                logger.info(f"Local job {job_id} found in process table → RUNNING.")
+            if job_id in (result.stdout or ""):
+                logger.info(f"Local job {job_id} found in process table -> RUNNING.")
                 return "RUNNING"
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, Exception) as exc:
             logger.warning(f"Could not query local process table: {exc}")
 
-        logger.warning(f"Local job {job_id}: no exit file or running process found → UNKNOWN.")
+        logger.warning(f"Local job {job_id}: no exit file or running process found -> UNKNOWN.")
         return "UNKNOWN"
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     try:
         watchdog = SlurmWatchdog()
-        print("Watchdog initialized successfully.")
+        logger.info("Watchdog initialized successfully.")
     except Exception as e:
-         print(f"Watchdog Error: {e}")
+        logger.error(f"Watchdog Error: {e}")

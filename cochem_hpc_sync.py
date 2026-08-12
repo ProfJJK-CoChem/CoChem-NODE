@@ -30,10 +30,10 @@ class ArtifactRetriever:
     """
     Handles secure SFTP extraction and cryptographic validation of HPC outputs.
     """
-    def __init__(self, bridge: Optional[NodeBridge] = None):
+    def __init__(self, bridge: Optional[NodeBridge] = None) -> None:
         self.bridge = bridge or NodeBridge()
 
-    def _ensure_connection(self):
+    def _ensure_connection(self) -> None:
         if self.bridge.client is not None:
             if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
                 logger.info("ArtifactRetriever: Re-establishing SSH connection...")
@@ -144,6 +144,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     try:
         retriever = ArtifactRetriever()
-        print("Artifact Retriever initialized. Cryptographic validation module is active.")
+        logger.info("Artifact Retriever initialized. Cryptographic validation module is active.")
     except Exception as e:
-         print(f"Retriever Error: {e}")
+        logger.error(f"Retriever Error: {e}")

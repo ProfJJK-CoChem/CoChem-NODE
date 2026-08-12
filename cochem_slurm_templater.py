@@ -4,6 +4,7 @@ Dynamically constructs HPC submission scripts using Jinja2 with CPU core pinning
 CUDA MPS daemon multiplexing controls, and 10-tier walltime budgets.
 """
 
+import hashlib
 import logging
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, TemplateError
@@ -91,7 +92,7 @@ class SlurmTemplater:
     """
     Renders Slurm batch scripts utilizing Jinja2, CPU core pinning, and CUDA MPS controls.
     """
-    def __init__(self, template_dir: Optional[str] = None, config: Optional[Any] = None):
+    def __init__(self, template_dir: Optional[str] = None, config: Optional[Any] = None) -> None:
         self.config = config or get_current_config()
         self.env = None
         
@@ -183,3 +184,13 @@ class SlurmTemplater:
         except TemplateError as e:
             logger.error(f"Failed to render Slurm template: {e}")
             raise
+
+    def compute_artifact_sha256(self, artifact_path: Path) -> str:
+        """Computes cryptographic SHA-256 hash for .out / .gbw computational artifacts."""
+        if not artifact_path.exists():
+            return ""
+        sha256_hash = hashlib.sha256()
+        with open(artifact_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()

@@ -2,7 +2,7 @@ import pytest
 from cochem_slurm_templater import SlurmTemplater
 from cochem_registry_schema import CoChemConfig
 
-def test_slurm_templater_render():
+def test_slurm_templater_render() -> None:
     templater = SlurmTemplater()
     script = templater.render_job(
         job_name="TestJob",

@@ -34,15 +34,18 @@ class Colors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
 
+logger = logging.getLogger("CoChem_Setup_Phase_5")
+
+
 def print_status(msg: str, status: str = "info") -> None:
     if status == "success":
-        print(f" {Colors.OKGREEN}✅ {msg}{Colors.ENDC}")
+        logger.info(f"✅ {msg}")
     elif status == "warning":
-        print(f" {Colors.WARNING}⚠️ {msg}{Colors.ENDC}")
+        logger.warning(f"⚠️ {msg}")
     elif status == "fail":
-        print(f" {Colors.FAIL}❌ {msg}{Colors.ENDC}")
+        logger.error(f"❌ {msg}")
     else:
-        print(f" ➡️ {msg}")
+        logger.info(f"➡️ {msg}")
 
 def read_phase_data() -> dict:
     """
@@ -54,10 +57,10 @@ def read_phase_data() -> dict:
         print_status("No intermediate build state found. Using default fallbacks.", "warning")
         return {}
     
-    with open(state_file, 'r') as f:
-        return json.load(f)
+    with open(state_file, 'r', encoding='utf-8') as f:
+        return json.loads(f.read())
 
-def compile_final_registry():
+def compile_final_registry() -> None:
     """
     Ingests phase data, maps to Pydantic schema, and atomically saves.
     """
@@ -91,7 +94,8 @@ def compile_final_registry():
 
         # Construct the Golden Gatekeeper payload
         valid_config = CoChemConfig(
-            registry_version="2.0",
+            registry_version="4.0",
+            schema_version="4.0.0",
             hardware=hardware,
             engines=engines,
             hpc=hpc
@@ -106,7 +110,7 @@ def compile_final_registry():
         print_status(f"Fatal Schema Generation Error: {e}", "fail")
         sys.exit(1)
 
-def cleanup_workspace():
+def cleanup_workspace() -> None:
     """Removes temporary build files."""
     state_file = PROJECT_ROOT / ".cochem_build_state.json"
     if state_file.exists():
@@ -114,7 +118,7 @@ def cleanup_workspace():
         print_status("Workspace cleanup complete.", "success")
 
 def main() -> None:
-    print(f"\n{Colors.BOLD}--- Phase 5: Ecosystem Integration & Finalization ---{Colors.ENDC}")
+    logger.info("--- Phase 5: Ecosystem Integration & Finalization ---")
     compile_final_registry()
     cleanup_workspace()
     print_status("CoChem Initialization Sequence Complete.", "success")

@@ -26,20 +26,25 @@ class Colors:
     FAIL = '\033[91m'
     ENDC = '\033[0m'
 
-logging.basicConfig(filename='cochem_node_bridge.log', level=logging.INFO)
+logger = logging.getLogger("CoChem_NODE_Bridge")
+
 
 class NodeBridge:
-    def __init__(self):
+    def __init__(self) -> None:
         self.config = self.load_config()
         self.client = None
         
     def load_config(self) -> dict:
-        for fname in ["cochem_system_config.json", "cochem_node_config.json"]:
-            path = Path(fname)
-            if path.exists():
-                with open(path, "r") as f:
-                    return json.load(f)
-        return {"hpc": {"host": "", "user": ""}}
+        try:
+            from cochem_base.config_loader import load_system_config_dict
+            return load_system_config_dict()
+        except ImportError:
+            for fname in ["cochem_system_config.json", "cochem_node_config.json"]:
+                path = Path(fname)
+                if path.exists():
+                    with open(path, "r", encoding="utf-8") as f:
+                        return json.loads(f.read())
+            return {"hpc": {"host": "", "user": ""}}
 
     def connect(self) -> bool:
         """Establishes the SSH Heartbeat using RSA/Ed25519 keys."""
@@ -48,14 +53,14 @@ class NodeBridge:
         user = hpc_cfg.get("user") or hpc_cfg.get("username")
         
         if not SSH_AVAILABLE:
-            logging.info("Paramiko module not available. Local dispatch mode active.")
+            logger.info("Paramiko module not available. Local dispatch mode active.")
             return False
 
         if not host or hpc_cfg.get("execution_mode") == "local":
-            logging.info("HPC credentials not configured or execution_mode is local. Local queue mode active.")
+            logger.info("HPC credentials not configured or execution_mode is local. Local queue mode active.")
             return False
 
-        print(f"🔌 Establishing Heartbeat to {user}@{host}...")
+        logger.info(f"Establishing Heartbeat to {user}@{host}...")
         try:
             self.client = paramiko.SSHClient()
             # Enforce strict security policy by loading system host keys and rejecting unverified hosts (NODE-08)
@@ -63,11 +68,10 @@ class NodeBridge:
             self.client.set_missing_host_key_policy(paramiko.RejectPolicy())
             # Assumes key-based auth via ssh-agent
             self.client.connect(hostname=host, username=user, timeout=10)
-            print(f"{Colors.OKGREEN}✅ Heartbeat Established.{Colors.ENDC}")
+            logger.info("Heartbeat Established.")
             return True
         except Exception as e:
-            print(f"{Colors.FAIL}❌ SSH Connection Failed: {e}{Colors.ENDC}")
-            logging.error(f"SSH Error: {e}")
+            logger.error(f"SSH Connection Failed: {e}")
             return False
 
     def check_remote_queue(self, username: str) -> list:
@@ -81,10 +85,22 @@ class NodeBridge:
 
         if not self.client:
             # Query local slurm queue if sbatch/squeue is installed locally
-            import subprocess
             try:
-                res = subprocess.run(["squeue", "-u", username, "-o", "%i|%j|%T|%M|%D"], capture_output=True, text=True, timeout=5)
-                if res.returncode == 0 and res.stdout.strip():
+                try:
+                    from core_engine.cochem_core_subprocess_broker import safe_subprocess_run
+                except ImportError:
+                    for p in Path(__file__).resolve().parents:
+                        cb = p / "CoChem-BASE"
+                        if cb.exists() and str(cb) not in sys.path:
+                            sys.path.insert(0, str(cb))
+                            break
+                    from core_engine.cochem_core_subprocess_broker import safe_subprocess_run
+
+                res = safe_subprocess_run(
+                    ["squeue", "-u", username, "-o", "%i|%j|%T|%M|%D"],
+                    check=False, capture_output=True, text=True, timeout=5.0
+                )
+                if res.returncode == 0 and (res.stdout or "").strip():
                     raw_lines = res.stdout.strip().split('\n')
                     local_jobs = []
                     for line in raw_lines[1:]:
@@ -99,7 +115,7 @@ class NodeBridge:
                             })
                     return local_jobs
             except Exception as err:
-                logging.debug(f"Local squeue query skipped: {err}")
+                logger.debug(f"Local squeue query skipped: {err}")
             return []
 
         safe_user = shlex.quote(username)
@@ -124,13 +140,13 @@ class NodeBridge:
                 
         return active_jobs
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         if self.client:
             self.client.close()
-            print(f"🔌 Connection closed.")
+            logger.info("Connection closed.")
 
-def main():
-    print(f"\n{Colors.OKCYAN}--- CoChem-NODE: HPC Bridge Telemetry ---{Colors.ENDC}")
+def main() -> None:
+    logger.info("--- CoChem-NODE: HPC Bridge Telemetry ---")
     bridge = NodeBridge()
     connected = bridge.connect()
     
@@ -139,9 +155,9 @@ def main():
     user = hpc_cfg.get("user") or hpc_cfg.get("username", os.getlogin())
     jobs = bridge.check_remote_queue(user)
     
-    print(f"📊 Active Jobs for '{user}': {len(jobs)}")
+    logger.info(f"Active Jobs for '{user}': {len(jobs)}")
     for j in jobs:
-        print(f"  [{j['jobid']}] {j['name']} : {j['state']}")
+        logger.info(f"  [{j['jobid']}] {j['name']} : {j['state']}")
         
     bridge.disconnect()
 

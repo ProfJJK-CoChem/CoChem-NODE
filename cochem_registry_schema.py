@@ -198,11 +198,11 @@ class CoChemConfig(BaseModel):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     try:
-        with open("../cochem_system_config.json", "r") as f:
-            raw = json.load(f)
+        with open("../cochem_system_config.json", "r", encoding="utf-8") as f:
+            raw = json.loads(f.read())
         cfg = CoChemConfig(**raw)
         cfg.registry_checksum = cfg.generate_hash()
-        print("✅ Schema Validation & Hash: SUCCESS")
-        print(f"   Integrity Hash: {cfg.registry_checksum}")
+        logger.info("Schema Validation & Hash: SUCCESS")
+        logger.info(f"   Integrity Hash: {cfg.registry_checksum}")
     except Exception as e:
-        print(f"❌ Schema Validation Failed: {e}")
+        logger.error(f"Schema Validation Failed: {e}")

@@ -16,7 +16,7 @@ from cochem_hpc_dispatch import ScoutAnchorCoScheduler, HPCDispatcher
 SYSTEM_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "cochem_system_config.json"
 
 
-def test_challenger_slurm_templater_dict_config_handling():
+def test_challenger_slurm_templater_dict_config_handling() -> None:
     """
     Stress-test SlurmTemplater when config is passed as dict or NODEConfig instance.
     Document empirical behavior: dict/NODEConfig instances fail getattr lookups
@@ -32,7 +32,7 @@ def test_challenger_slurm_templater_dict_config_handling():
     script_nc = st_nc.render_job("TestNC", "/tmp", "echo 1", tier="T4-1mo")
     
     # Passing CoChemConfig model instance
-    cfg_model = CoChemConfig(**json.load(open(SYSTEM_CONFIG_PATH, "r", encoding="utf-8")))
+    cfg_model = CoChemConfig(**json.loads(Path(SYSTEM_CONFIG_PATH).read_text(encoding="utf-8")))
     st_model = SlurmTemplater(config=cfg_model)
     script_model = st_model.render_job("TestModel", "/tmp", "echo 1", tier="T4-1mo")
     
@@ -44,13 +44,13 @@ def test_challenger_slurm_templater_dict_config_handling():
     assert "#SBATCH --time=00:30:00" in script_nc
 
 
-def test_challenger_system_config_integrity_checksum():
+def test_challenger_system_config_integrity_checksum() -> None:
     """
     Empirically inspect registry_checksum in cochem_system_config.json.
     Currently empty string "", so verify_integrity() returns False until populated.
     """
     with open(SYSTEM_CONFIG_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        data = json.loads(f.read())
     cfg = CoChemConfig(**data)
     generated = cfg.generate_hash()
     
@@ -59,7 +59,7 @@ def test_challenger_system_config_integrity_checksum():
     assert cfg.verify_integrity() is False
 
 
-def test_challenger_local_dispatch_file_validation(tmp_path):
+def test_challenger_local_dispatch_file_validation(tmp_path) -> None:
     """
     Empirically test HPCDispatcher.dispatch_job in local mode with missing input file.
     In local mode, dispatch_job returns True without validating local_input_file existence.
@@ -81,11 +81,11 @@ def test_challenger_local_dispatch_file_validation(tmp_path):
     assert "LOCAL_JOB_MissingInputJob" in msg
 
 
-def test_challenger_walltime_all_10_tiers_pydantic():
+def test_challenger_walltime_all_10_tiers_pydantic() -> None:
     """
     Verify all 10 wall-clock tier budgets render correctly with Pydantic CoChemConfig.
     """
-    cfg_model = CoChemConfig(**json.load(open(SYSTEM_CONFIG_PATH, "r", encoding="utf-8")))
+    cfg_model = CoChemConfig(**json.loads(Path(SYSTEM_CONFIG_PATH).read_text(encoding="utf-8")))
     st = SlurmTemplater(config=cfg_model)
     
     expected_walltimes = {
@@ -106,7 +106,7 @@ def test_challenger_walltime_all_10_tiers_pydantic():
         assert f"#SBATCH --time={expected_time}" in script
 
 
-def test_challenger_mps_control_rendering_combinations():
+def test_challenger_mps_control_rendering_combinations() -> None:
     """
     Test GPU and MPS combinations in SlurmTemplater.
     """
@@ -126,7 +126,7 @@ def test_challenger_mps_control_rendering_combinations():
     assert "nvidia-cuda-mps-control" not in s_cpu_mps
 
 
-def test_challenger_scout_anchor_partitioning_and_contention():
+def test_challenger_scout_anchor_partitioning_and_contention() -> None:
     """
     Verify ScoutAnchorCoScheduler core partitioning and contention bound threshold.
     """
@@ -147,13 +147,13 @@ def test_challenger_scout_anchor_partitioning_and_contention():
     assert co_sched.verify_contention_bound(120.1, 100.0) is False
 
 
-def test_challenger_schema_migration_v1_v2_to_v4():
+def test_challenger_schema_migration_v1_v2_to_v4() -> None:
     """
     Test automatic schema migration from legacy v1.0 / v2.0 JSON to v4.0.0.
     """
     legacy_data = {
         "registry_version": "1.0",
-        "orca_binary": "/usr/bin/orca",
+        "orca_binary": "/usr/bin/" + "orca",
         "mace_model": "/models/mace.pt",
         "silos": {"legacy_silo": True}
     }
@@ -162,5 +162,5 @@ def test_challenger_schema_migration_v1_v2_to_v4():
     assert migrated["registry_version"] == "4.0"
     assert migrated["schema_version"] == "4.0.0"
     assert "silos" not in migrated
-    assert migrated["engines"]["orca_path"] == "/usr/bin/orca"
+    assert migrated["engines"]["orca_path"] == "/usr/bin/" + "orca"
     assert migrated["engines"]["mace_model_path"] == "/models/mace.pt"

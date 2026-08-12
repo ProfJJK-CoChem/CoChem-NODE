@@ -30,12 +30,12 @@ class RegistryHealer:
     """
     Synchronizes local tracking databases with the remote Slurm queue.
     """
-    def __init__(self, bridge: Optional[NodeBridge] = None, registry_manager: Optional[RegistryManager] = None):
+    def __init__(self, bridge: Optional[NodeBridge] = None, registry_manager: Optional[RegistryManager] = None) -> None:
         self.registry_manager = registry_manager or RegistryManager()
         self.config = self.registry_manager.get_config()
         self.bridge = bridge or NodeBridge(self.config)
 
-    def _ensure_connection(self):
+    def _ensure_connection(self) -> None:
         if self.bridge.client is not None:
             if not self.bridge.client.get_transport() or not self.bridge.client.get_transport().is_active():
                 logger.info("RegistryHealer: Re-establishing SSH connection...")
@@ -130,6 +130,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     try:
         healer = RegistryHealer()
-        print("Registry Healer initialized.")
+        logger.info("Registry Healer initialized.")
     except Exception as e:
-         print(f"Healer Error: {e}")
+        logger.error(f"Healer Error: {e}")
