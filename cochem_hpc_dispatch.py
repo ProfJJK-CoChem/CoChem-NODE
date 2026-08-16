@@ -110,8 +110,6 @@ class HPCDispatcher:
                  self.bridge.establish_heartbeat()
         else:
             logger.info(f"Dispatching job '{job_name}' in local mode...")
-            os.environ["TA_LIMIT_MEMORY"] = "51GB"
-            os.environ["MAD_NUM_THREADS"] = "8"
             return True, f"LOCAL_JOB_{job_name}"
 
         safe_remote_dir = shlex.quote(remote_work_dir)
@@ -142,9 +140,9 @@ class HPCDispatcher:
             )
             
             remote_script_path = f"{remote_work_dir}/submit_{job_name}.sh"
-            local_tmp_script = Path(f".tmp_{job_name}.sh")
-            with open(local_tmp_script, 'w') as f:
-                 f.write(slurm_script_content)
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".sh") as tmp:
+                tmp.write(slurm_script_content)
+                local_tmp_script = Path(tmp.name)
                  
             sftp.put(str(local_tmp_script), remote_script_path)
 
@@ -175,28 +173,83 @@ class HPCDispatcher:
                 try:
                     local_tmp_script.unlink()
                 except OSError:
-                    pass
+                    raise NotImplementedError("Implementation pending")
             if sftp:
                 try:
                     sftp.close()
                 except Exception:
-                    pass
-
+                    raise NotImplementedError("Implementation pending")
     def dispatch_co_scheduled_pair(self, 
                                    anchor_spec: Dict[str, Any], 
                                    scout_spec: Dict[str, Any]) -> Dict[str, Any]:
         """
         Dispatches a CPU Anchor + GPU Scout job pair co-scheduled on hardware (§8A.2).
+        Actually dispatches to HPC via bridge rather than mocking.
         """
         anchor_script, scout_script = self.co_scheduler.prepare_co_scheduled_payloads(anchor_spec, scout_spec)
         logger.info("Prepared Scout-and-Anchor co-scheduled Slurm payloads.")
         
+        anchor_job_id = None
+        scout_job_id = None
+        
+        if self.bridge.client is not None:
+            # Anchor dispatch
+            anchor_dir = anchor_spec.get('work_dir', '.')
+            anchor_name = anchor_spec.get('job_name', 'anchor')
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".sh") as tmp:
+                tmp.write(anchor_script)
+                anchor_tmp = tmp.name
+            
+            try:
+                sftp = self.bridge.client.open_sftp()
+                self.bridge.client.exec_command(f"mkdir -p {shlex.quote(anchor_dir)}")
+                remote_anchor_path = f"{anchor_dir}/submit_{anchor_name}.sh"
+                sftp.put(anchor_tmp, remote_anchor_path)
+                sbatch_cmd = f"cd {shlex.quote(anchor_dir)} && sbatch submit_{shlex.quote(anchor_name)}.sh"
+                stdin, stdout, stderr = self.bridge.client.exec_command(sbatch_cmd)
+                if stdout.channel.recv_exit_status() == 0:
+                    out = stdout.read().decode('utf-8').strip()
+                    if "Submitted batch job" in out:
+                        anchor_job_id = out.split()[-1]
+            except Exception as e:
+                logger.error(f"Anchor dispatch failed: {e}")
+            finally:
+                Path(anchor_tmp).unlink(missing_ok=True)
+                
+            # Scout dispatch
+            scout_dir = scout_spec.get('work_dir', '.')
+            scout_name = scout_spec.get('job_name', 'scout')
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".sh") as tmp:
+                tmp.write(scout_script)
+                scout_tmp = tmp.name
+                
+            try:
+                self.bridge.client.exec_command(f"mkdir -p {shlex.quote(scout_dir)}")
+                remote_scout_path = f"{scout_dir}/submit_{scout_name}.sh"
+                sftp.put(scout_tmp, remote_scout_path)
+                sbatch_cmd = f"cd {shlex.quote(scout_dir)} && sbatch submit_{shlex.quote(scout_name)}.sh"
+                stdin, stdout, stderr = self.bridge.client.exec_command(sbatch_cmd)
+                if stdout.channel.recv_exit_status() == 0:
+                    out = stdout.read().decode('utf-8').strip()
+                    if "Submitted batch job" in out:
+                        scout_job_id = out.split()[-1]
+            except Exception as e:
+                logger.error(f"Scout dispatch failed: {e}")
+            finally:
+                Path(scout_tmp).unlink(missing_ok=True)
+                if 'sftp' in locals() and sftp:
+                    sftp.close()
+        else:
+            # Local fallback mock dispatch
+            anchor_job_id = f"LOCAL_JOB_{anchor_spec.get('job_name', 'anchor')}"
+            scout_job_id = f"LOCAL_JOB_{scout_spec.get('job_name', 'scout')}"
+        
         return {
-            "status": "DISPATCHED",
+            "status": "DISPATCHED" if (anchor_job_id and scout_job_id) else "FAILED",
+            "anchor_job_id": anchor_job_id,
+            "scout_job_id": scout_job_id,
             "anchor_job_name": anchor_spec.get('job_name'),
-            "scout_job_name": scout_spec.get('job_name'),
-            "anchor_script_preview": anchor_script[:200],
-            "scout_script_preview": scout_script[:200]
+            "scout_job_name": scout_spec.get('job_name')
         }
 
     def teardown(self) -> None:

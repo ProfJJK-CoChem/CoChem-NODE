@@ -14,7 +14,7 @@ from typing import Optional
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:

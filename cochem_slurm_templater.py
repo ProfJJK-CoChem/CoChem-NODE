@@ -31,8 +31,8 @@ logger.setLevel(logging.INFO)
 DEFAULT_SLURM_TEMPLATE = """#!/bin/bash
 #SBATCH --job-name={{ job_name }}
 #SBATCH --partition={{ partition }}
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node={{ cores }}
+#SBATCH --nodes={{ nodes | default(1) }}
+#SBATCH --ntasks={{ total_tasks }}
 #SBATCH --cpus-per-task={{ cpus_per_task }}
 #SBATCH --mem={{ memory_mb }}M
 #SBATCH --time={{ walltime }}
@@ -43,16 +43,16 @@ DEFAULT_SLURM_TEMPLATE = """#!/bin/bash
 {% endif %}{% if gpu_spec %}#SBATCH --gres={{ gpu_spec }}
 {% endif %}
 
-# --- CoChem-NODE Core Pinning & Topology (§8A.0) ---
+# --- CoChem-NODE Core Pinning & Topology ( 8A.0) ---
 export KMP_HW_SUBSET={{ kmp_hw_subset | default('8c:intel_core,1t') }}
-export OMP_NUM_THREADS={{ cores }}
-export TA_LIMIT_MEMORY=51GB
-export MAD_NUM_THREADS=8
+export OMP_NUM_THREADS={{ cpus_per_task }}
+export TA_LIMIT_MEMORY={{ memory_mb }}M
+export MAD_NUM_THREADS={{ cpus_per_task }}
 export TMPDIR=/scratch/${USER}/${SLURM_JOB_ID}
 mkdir -p $TMPDIR
 
 {% if use_gpu and mps_enabled %}
-# --- CUDA MPS Daemon Start (§8A.4) ---
+# --- CUDA MPS Daemon Start ( 8A.4) ---
 export CUDA_MPS_PIPE_DIRECTORY={{ mps_pipe_dir | default('/tmp/nvidia-mps') }}
 export CUDA_MPS_LOG_DIRECTORY={{ mps_log_dir | default('/tmp/nvidia-log') }}
 export CUDA_MPS_ACTIVE_THREAD_PERCENTAGE={{ mps_thread_pct | default(25) }}
@@ -123,11 +123,23 @@ class SlurmTemplater:
         max_cores = getattr(self.config.hardware, 'cpu_cores', 8) if hasattr(self.config, 'hardware') else 8
         max_mem = getattr(self.config.hardware, 'ram_mb', 32000) if hasattr(self.config, 'hardware') else 32000
         
-        cores = min(requested_cores or max_cores, max_cores)
+        # Multi-Node Routing Logic
+        req_cores = requested_cores or max_cores
+        total_tasks = max(1, req_cores // cpus_per_task)
+        
+        if req_cores > max_cores:
+            import math
+            nodes = math.ceil(req_cores / max_cores)
+            logger.info(f"Requested {req_cores} cores exceeds physical max ({max_cores}). Routing as Multi-Node job with {nodes} nodes.")
+        else:
+            nodes = 1
+            
+        if total_tasks > 1:
+            # Prefix the execution command with mpirun using the correct total tasks (ranks)
+            execution_command = f"mpirun -np {total_tasks} {execution_command}"
+
         memory_mb = min(requested_memory_mb or max_mem, max_mem)
         
-        if cores < (requested_cores or 0):
-             logger.warning(f"Requested {requested_cores} cores exceeds physical max ({max_cores}). Throttling down.")
         if memory_mb < (requested_memory_mb or 0):
              logger.warning(f"Requested {requested_memory_mb} MB exceeds system max ({max_mem} MB). Throttling down.")
 
@@ -151,7 +163,8 @@ class SlurmTemplater:
         payload_vars = {
             "job_name": job_name,
             "partition": partition,
-            "cores": cores,
+            "nodes": nodes,
+            "total_tasks": total_tasks,
             "cpus_per_task": cpus_per_task,
             "memory_mb": memory_mb,
             "walltime": resolved_walltime,
