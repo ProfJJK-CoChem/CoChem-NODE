@@ -27,7 +27,7 @@ module load openmpi/4.1.8
 
 
 
-cd D:\Gdrive\__CoChem\GitHub-Repo\CoChem-NODE
+cd ${SLURM_SUBMIT_DIR:-$HOME/CoChem}\GitHub-Repo\CoChem-NODE
 
 echo "Executing Engine: TestModule"
 echo "Tier: T1-30min"

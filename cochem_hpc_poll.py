@@ -175,30 +175,17 @@ class SlurmWatchdog:
 
         # 2. Check local process table for a running process matching the job_id
         try:
+            import psutil
             try:
-                from core_engine.cochem_core_subprocess_broker import safe_subprocess_run
-            except ImportError:
-                for p in Path(__file__).resolve().parents:
-                    cb = p / "CoChem-BASE"
-                    if cb.exists() and str(cb) not in sys.path:
-                        sys.path.insert(0, str(cb))
-                        break
-                from core_engine.cochem_core_subprocess_broker import safe_subprocess_run
-
-            if os.name == "nt":
-                result = safe_subprocess_run(
-                    ["tasklist", "/FI", f"WINDOWTITLE eq {job_id}"],
-                    check=False, capture_output=True, text=True, timeout=5.0
-                )
-            else:
-                result = safe_subprocess_run(
-                    ["ps", "aux"],
-                    check=False, capture_output=True, text=True, timeout=5.0
-                )
-            if job_id in (result.stdout or ""):
-                logger.info(f"Local job {job_id} found in process table -> RUNNING.")
-                return "RUNNING"
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, Exception) as exc:
+                pid = int(job_id)
+                if psutil.pid_exists(pid):
+                    logger.info(f"Local job {job_id} found in process table -> RUNNING.")
+                    return "RUNNING"
+            except ValueError:
+                logger.warning(f"Job ID {job_id} is not a valid integer PID.")
+        except ImportError:
+            logger.warning("psutil not found. Could not query local process table.")
+        except Exception as exc:
             logger.warning(f"Could not query local process table: {exc}")
 
         logger.warning(f"Local job {job_id}: no exit file or running process found -> UNKNOWN.")

@@ -78,7 +78,7 @@ def test_challenger_local_dispatch_file_validation(tmp_path) -> None:
     )
     # Local mode returns True early without verifying missing input file
     assert success is True
-    assert "LOCAL_JOB_MissingInputJob" in msg
+    assert msg.isdigit()  # Local mode returns the PID of the spawned process
 
 
 def test_challenger_walltime_all_10_tiers_pydantic() -> None:

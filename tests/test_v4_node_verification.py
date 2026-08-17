@@ -169,7 +169,7 @@ def test_node02_10_validate_tier_helper() -> None:
 def test_node03_01_core_pinning_injection() -> None:
     """Render job script and assert export KMP_HW_SUBSET=8c:intel_core,1t is present."""
     templater = SlurmTemplater()
-    script = templater.render_job("PinTest", "/scratch", "echo 1")
+    script = templater.render_job("PinTest", "/scratch", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"')
     assert "export KMP_HW_SUBSET=8c:intel_core,1t" in script
 
 def test_node03_02_mps_daemon_start_block() -> None:
@@ -193,39 +193,39 @@ def test_node03_04_cpu_job_excludes_mps() -> None:
 def test_node03_05_tier_walltime_resolution() -> None:
     """Render job with tier='T1-30min' and assert #SBATCH --time=00:30:00."""
     templater = SlurmTemplater()
-    script = templater.render_job("TierTest", "/scratch", "echo 1", tier="T1-30min")
+    script = templater.render_job("TierTest", "/scratch", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"', tier="T1-30min")
     assert "#SBATCH --time=00:30:00" in script
 
 def test_node03_06_tier_walltime_1mo_resolution() -> None:
     """Render job with tier='T4-1mo' and assert #SBATCH --time=720:00:00."""
     templater = SlurmTemplater()
-    script = templater.render_job("LongTest", "/scratch", "echo 1", tier="T4-1mo")
+    script = templater.render_job("LongTest", "/scratch", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"', tier="T4-1mo")
     assert "#SBATCH --time=720:00:00" in script
 
 def test_node03_07_cpus_per_task_rendering() -> None:
     """Assert #SBATCH --cpus-per-task matches requested core allocation."""
     templater = SlurmTemplater()
-    script = templater.render_job("CpuTaskTest", "/scratch", "echo 1", cpus_per_task=2)
+    script = templater.render_job("CpuTaskTest", "/scratch", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"', cpus_per_task=2)
     assert "#SBATCH --cpus-per-task=2" in script
 
 def test_node03_08_module_loading_sequence() -> None:
     """Verify module purge and module load sequence rendering."""
     templater = SlurmTemplater()
-    script = templater.render_job("ModTest", "/scratch", "echo 1", modules_to_load=["orca/6.1.1"])
+    script = templater.render_job("ModTest", "/scratch", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"', modules_to_load=["orca/6.1.1"])
     assert "module purge" in script
     assert "module load orca/6.1.1" in script
 
 def test_node03_09_scratch_dir_trap_cleanup() -> None:
     """Verify export TMPDIR=/scratch/... and rm -rf $TMPDIR trap block."""
     templater = SlurmTemplater()
-    script = templater.render_job("TrapTest", "/scratch", "echo 1")
+    script = templater.render_job("TrapTest", "/scratch", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"')
     assert "export TMPDIR=/scratch/" in script
     assert "rm -rf $TMPDIR" in script
 
 def test_node03_10_resource_throttling_safety(caplog) -> None:
     """Assert requested cores exceeding physical max are throttled down."""
     templater = SlurmTemplater()
-    script = templater.render_job("ThrottleTest", "/scratch", "echo 1", requested_cores=128)
+    script = templater.render_job("ThrottleTest", "/scratch", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"', requested_cores=128)
     assert "#SBATCH --ntasks-per-node=8" in script
 
 # ==========================================
@@ -284,25 +284,44 @@ def test_node04_07_local_mode_dispatch_fallback(tmp_path) -> None:
     """Call dispatch_job in local mode and verify return tuple."""
     dispatcher = HPCDispatcher()
     input_file = tmp_path / "test.inp"
-    input_file.write_text("! DFT")
+    # Minimal valid payload that takes >1s
+    input_file.write_text("! SP PBE def2-SVP\n* xyz 0 1\nO 0.0 0.0 0.0\nH 0.0 0.75 0.5\nH 0.0 -0.75 0.5\n*\n")
+    
+    orca_path = "C:\\ORCA_6.1.1\\orca.exe"
+    execution_cmd = f'"{orca_path}" "{input_file.name}" > "test.out"'
+
     success, job_id = dispatcher.dispatch_job(
         job_name="LocalTest",
         local_input_file=input_file,
         remote_work_dir=str(tmp_path),
         engine_name="ORCA",
-        execution_command="echo 1",
+        execution_command=execution_cmd,
         requested_cores=2,
         requested_memory_mb=1000
     )
     assert success is True
-    assert "LOCAL_JOB_LocalTest" in job_id
+    assert job_id.isdigit()  # Local mode returns the PID
 
-def test_node04_08_co_scheduled_pair_dispatch_payload() -> None:
+def test_node04_08_co_scheduled_pair_dispatch_payload(tmp_path) -> None:
     """Call dispatch_co_scheduled_pair and assert returned dict status is DISPATCHED."""
     dispatcher = HPCDispatcher()
+    
+    anc_dir = tmp_path / "anchor"
+    anc_dir.mkdir()
+    anc_inp = anc_dir / "anchor.inp"
+    anc_inp.write_text("! SP PBE def2-SVP\n* xyz 0 1\nO 0.0 0.0 0.0\nH 0.0 0.75 0.5\nH 0.0 -0.75 0.5\n*\n")
+    orca_path = "C:\\ORCA_6.1.1\\orca.exe"
+    anc_cmd = f'"{orca_path}" "anchor.inp" > "anchor.out"'
+    
+    sct_dir = tmp_path / "scout"
+    sct_dir.mkdir()
+    sct_inp = sct_dir / "scout.inp"
+    sct_inp.write_text("! SP PBE def2-SVP\n* xyz 0 1\nO 0.0 0.0 0.0\nH 0.0 0.75 0.5\nH 0.0 -0.75 0.5\n*\n")
+    sct_cmd = f'"{orca_path}" "scout.inp" > "scout.out"'
+
     res = dispatcher.dispatch_co_scheduled_pair(
-        anchor_spec={"job_name": "AnchorA", "work_dir": "/tmp"},
-        scout_spec={"job_name": "ScoutB", "work_dir": "/tmp"}
+        anchor_spec={"job_name": "AnchorA", "work_dir": str(anc_dir), "execution_command": anc_cmd},
+        scout_spec={"job_name": "ScoutB", "work_dir": str(sct_dir), "execution_command": sct_cmd}
     )
     assert res.get("status") == "DISPATCHED"
     assert res.get("anchor_job_name") == "AnchorA"
@@ -312,8 +331,8 @@ def test_node04_09_temp_script_cleanup(tmp_path) -> None:
     """Verify temp submission script cleanup after dispatch attempt."""
     dispatcher = HPCDispatcher()
     input_file = tmp_path / "in.inp"
-    input_file.write_text("! DFT")
-    dispatcher.dispatch_job("CleanTest", input_file, str(tmp_path), "ORCA", "echo 1", 2, 1000)
+    input_file.write_text("! SP PBE def2-SVP\n* xyz 0 1\nO 0.0 0.0 0.0\nH 0.0 0.75 0.5\nH 0.0 -0.75 0.5\n*\n")
+    dispatcher.dispatch_job("CleanTest", input_file, str(tmp_path), "ORCA", 'C:\\ORCA_6.1.1\\orca.exe "in.inp" > "test.out"', 2, 1000)
     assert not Path(".tmp_CleanTest.sh").exists()
 
 def test_node04_10_teardown_disconnect() -> None:

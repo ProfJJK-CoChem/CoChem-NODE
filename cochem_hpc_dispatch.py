@@ -109,8 +109,15 @@ class HPCDispatcher:
                  logger.info("Initializing NodeBridge connection...")
                  self.bridge.establish_heartbeat()
         else:
-            logger.info(f"Dispatching job '{job_name}' in local mode...")
-            return True, f"LOCAL_JOB_{job_name}"
+            logger.info(f"Local dispatch executing for '{job_name}'")
+            import subprocess
+            try:
+                os.makedirs(remote_work_dir, exist_ok=True)
+                proc = subprocess.Popen(execution_command, shell=True, cwd=remote_work_dir)
+                return True, str(proc.pid)
+            except Exception as e:
+                logger.error(f"Local dispatch failed for '{job_name}': {e}")
+                return False, str(e)
 
         safe_remote_dir = shlex.quote(remote_work_dir)
         safe_job_name = shlex.quote(job_name)
@@ -172,13 +179,13 @@ class HPCDispatcher:
             if local_tmp_script and local_tmp_script.exists():
                 try:
                     local_tmp_script.unlink()
-                except OSError:
-                    raise NotImplementedError("Implementation pending")
+                except OSError as e:
+                    logger.warning(f"Failed to delete temp file {local_tmp_script}: {e}")
             if sftp:
                 try:
                     sftp.close()
-                except Exception:
-                    raise NotImplementedError("Implementation pending")
+                except Exception as e:
+                    logger.warning(f"Failed to close SFTP connection: {e}")
     def dispatch_co_scheduled_pair(self, 
                                    anchor_spec: Dict[str, Any], 
                                    scout_spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -240,9 +247,22 @@ class HPCDispatcher:
                 if 'sftp' in locals() and sftp:
                     sftp.close()
         else:
-            # Local fallback mock dispatch
-            anchor_job_id = f"LOCAL_JOB_{anchor_spec.get('job_name', 'anchor')}"
-            scout_job_id = f"LOCAL_JOB_{scout_spec.get('job_name', 'scout')}"
+            logger.info("Local fallback dispatch executing for co-scheduled pair")
+            import subprocess
+            try:
+                anc_dir = anchor_spec.get('work_dir', '.')
+                sct_dir = scout_spec.get('work_dir', '.')
+                os.makedirs(anc_dir, exist_ok=True)
+                os.makedirs(sct_dir, exist_ok=True)
+                
+                anc_proc = subprocess.Popen(anchor_spec['execution_command'], shell=True, cwd=anc_dir)
+                anchor_job_id = str(anc_proc.pid)
+                
+                sct_proc = subprocess.Popen(scout_spec['execution_command'], shell=True, cwd=sct_dir)
+                scout_job_id = str(sct_proc.pid)
+            except Exception as e:
+                logger.error(f"Local co-scheduled dispatch failed: {e}")
+                return {"status": "FAILED", "anchor_job_id": None, "scout_job_id": None, "anchor_job_name": anchor_spec.get('job_name'), "scout_job_name": scout_spec.get('job_name')}
         
         return {
             "status": "DISPATCHED" if (anchor_job_id and scout_job_id) else "FAILED",

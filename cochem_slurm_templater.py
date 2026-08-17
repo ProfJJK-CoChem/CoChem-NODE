@@ -33,7 +33,8 @@ DEFAULT_SLURM_TEMPLATE = """#!/bin/bash
 #SBATCH --partition={{ partition }}
 #SBATCH --nodes={{ nodes | default(1) }}
 #SBATCH --ntasks={{ total_tasks }}
-#SBATCH --cpus-per-task={{ cpus_per_task }}
+{% if ntasks_per_node %}#SBATCH --ntasks-per-node={{ ntasks_per_node }}
+{% endif %}#SBATCH --cpus-per-task={{ cpus_per_task }}
 #SBATCH --mem={{ memory_mb }}M
 #SBATCH --time={{ walltime }}
 #SBATCH --output={{ output_log }}
@@ -123,16 +124,45 @@ class SlurmTemplater:
         max_cores = getattr(self.config.hardware, 'cpu_cores', 8) if hasattr(self.config, 'hardware') else 8
         max_mem = getattr(self.config.hardware, 'ram_mb', 32000) if hasattr(self.config, 'hardware') else 32000
         
-        # Multi-Node Routing Logic
         req_cores = requested_cores or max_cores
+        
+        # --- Method Matrix CCSD(T) Physics Wall Enforcement ---
+        if "CCSD(T)" in execution_command or "CCSD(T)" in engine_name.upper():
+            if req_cores < 4:
+                logger.error(f"[HARD_ABORT: PHYSICS WALL] CCSD(T) requires >= 4 CPU cores. Requested: {req_cores}")
+                raise ValueError(f"[HARD_ABORT: PHYSICS WALL] CCSD(T) requires >= 4 CPU cores.")
+        
+        if requested_memory_mb and requested_memory_mb > max_mem:
+            logger.error(f"[HARD_ABORT: PHYSICS WALL] Requested RAM {requested_memory_mb} MB exceeds physical limit {max_mem} MB.")
+            raise ValueError(f"[HARD_ABORT: PHYSICS WALL] Requested RAM {requested_memory_mb} MB exceeds physical limit {max_mem} MB.")
+        
+        # --- Method Matrix Compliance Check ---
+        if "Opt" in execution_command or "opt" in execution_command.lower():
+            if "Calc_Hess true" in execution_command or "calc_hess true" in execution_command.lower():
+                 logger.error(f"[HARD_ABORT: PHYSICS WALL] Calc_Hess true is strictly prohibited for geometry optimizations. Use InHess XTB2 or Lindh.")
+                 raise ValueError("[HARD_ABORT: PHYSICS WALL] Calc_Hess true is strictly prohibited for geometry optimizations.")
+            if "TolMaxG 1e-5" not in execution_command and "intermolecular" in job_name.lower():
+                 logger.warning("Intermolecular convergence requires TolMaxG 1e-5 per Method Matrix.")
+            if "defgrid3" not in execution_command.lower() and "defgrid1" not in execution_command.lower():
+                 pass # Warning or error logic can be expanded
+            if "Grid3" in execution_command or "Grid5" in execution_command:
+                 logger.error("[HARD_ABORT: PHYSICS WALL] Grid3/Grid5 terminology prohibited. Use defgrid1/defgrid3.")
+                 raise ValueError("[HARD_ABORT: PHYSICS WALL] Grid3/Grid5 terminology prohibited.")
+            if "D3" not in execution_command and "D4" not in execution_command and "B3LYP" in execution_command:
+                 logger.error("[HARD_ABORT: PHYSICS WALL] DFT optimizations of weak complexes require D3/D4 dispersion.")
+                 raise ValueError("[HARD_ABORT: PHYSICS WALL] DFT optimizations of weak complexes require D3/D4 dispersion.")
+
+        # Multi-Node Routing Logic
         total_tasks = max(1, req_cores // cpus_per_task)
         
         if req_cores > max_cores:
             import math
             nodes = math.ceil(req_cores / max_cores)
+            ntasks_per_node = max_cores
             logger.info(f"Requested {req_cores} cores exceeds physical max ({max_cores}). Routing as Multi-Node job with {nodes} nodes.")
         else:
             nodes = 1
+            ntasks_per_node = total_tasks
             
         if total_tasks > 1:
             # Prefix the execution command with mpirun using the correct total tasks (ranks)
@@ -140,8 +170,6 @@ class SlurmTemplater:
 
         memory_mb = min(requested_memory_mb or max_mem, max_mem)
         
-        if memory_mb < (requested_memory_mb or 0):
-             logger.warning(f"Requested {requested_memory_mb} MB exceeds system max ({max_mem} MB). Throttling down.")
 
         # Resolve Walltime from Tier Budget if specified
         resolved_walltime = walltime or "00:30:00"
@@ -165,6 +193,7 @@ class SlurmTemplater:
             "partition": partition,
             "nodes": nodes,
             "total_tasks": total_tasks,
+            "ntasks_per_node": ntasks_per_node,
             "cpus_per_task": cpus_per_task,
             "memory_mb": memory_mb,
             "walltime": resolved_walltime,
