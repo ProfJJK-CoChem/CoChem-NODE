@@ -85,7 +85,11 @@ echo "Job finished at $(date) with exit code $exit_code"
 echo "quit" | nvidia-cuda-mps-control
 {% endif %}
 
-rm -rf $TMPDIR
+if [ $exit_code -eq 0 ]; then
+    rm -rf $TMPDIR
+else
+    echo "Job failed with exit code $exit_code. TMPDIR $TMPDIR preserved for debugging."
+fi
 exit $exit_code
 """
 
